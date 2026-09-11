@@ -35,14 +35,32 @@ ocx sync
 ```bash
 ocx config set runtimeRole hub
 ocx config set hostname 100.64.0.10
-ocx config set hub.managementPublicOrigin '"https://hub-name.tailnet-name.ts.net"'
 ocx config set corsAllowOrigins '["http://localhost:10100"]'
+
+# 새로 만든 standalone 설정에는 `hub`와 `remoteGui` 객체가 없습니다. `ocx config set`은
+# 없는 상위 객체를 만들어 주지 않으므로 중첩 경로를 바로 쓰면
+# `config parent path not found: hub`로 실패합니다. `runtimeRole`을 바꿔도 객체는
+# 생기지 않습니다. 객체를 먼저 만들고 나서 필드를 설정하세요.
+ocx config set hub '{}'
+ocx config set remoteGui '{}'
+ocx config set hub.managementPublicOrigin '"https://hub-name.tailnet-name.ts.net"'
 ocx config set hub.managementIngress '{"enabled":true,"port":10101}'
 ocx config set remoteGui.allowedTailscaleUsers '["operator@example.com"]'
 export OPENCODEX_API_AUTH_TOKEN="$(openssl rand -hex 32)"
 ocx service install
 ocx service status
 ```
+
+설정이 아직 완전히 비어 있다면 객체를 한 번에 넣어도 됩니다.
+
+```bash
+ocx config set hub '{"managementPublicOrigin":"https://hub-name.tailnet-name.ts.net","managementIngress":{"enabled":true,"port":10101}}'
+ocx config set remoteGui '{"allowedTailscaleUsers":["operator@example.com"]}'
+```
+
+이 형태는 객체가 아직 없을 때만 쓰세요. 객체 전체를 설정하면 병합이 아니라 **덮어쓰기**입니다. 이미 `hub.managementIngress`가 있던 설정에 위 줄을 실행하면 그 값이 조용히 사라집니다. 기존 설정을 고칠 때는 상위 객체가 이미 있으니 중첩 경로로 한 필드씩 설정하세요. 그러면 나머지 값은 건드리지 않습니다.
+
+줄이 받아들여지는지를 가르는 것은 두 가지입니다. 값은 JSON으로 먼저 해석하고 실패하면 원래 문자열로 취급합니다. URL을 `'"https://…"'`처럼 쓰는 이유가 이것이고, 객체·배열·불리언·숫자는 올바른 JSON이어야 합니다. 그리고 `hub`와 `remoteGui`는 스키마가 엄격해서, 키를 잘못 적거나 값이 규격에 맞지 않으면 저장 시점에 `schema_invalid` 오류로 거부됩니다. 적용되지 않는 설정이 조용히 남는 일은 없습니다. `managementPublicOrigin`은 경로·쿼리·프래그먼트가 없는 순수 origin이어야 합니다.
 
 `ocx service install`은 키를 기존 `service-api-token` 경로에 안전하게 저장합니다. plist나 systemd unit에는 실제 키가 들어가지 않습니다.
 
@@ -63,6 +81,41 @@ tailscale serve status
 ```
 
 관리 포트는 `127.0.0.1:10101`에서만 보여야 합니다. `hub.managementPublicOrigin`은 Serve가 표시한 정확한 HTTPS Origin으로 설정하세요. 직접 TLS 프록시를 운영한다면 `tailscale cert hub-name.tailnet-name.ts.net`으로 ts.net 전체 FQDN 인증서만 발급하고 `127.0.0.1:10101`로만 프록시하세요. 임의의 `Tailscale-User-*` 헤더를 만들지 말고, 신뢰할 수 있는 Tailscale 신원이 없으면 일회용 pairing을 사용하세요.
+
+### 데이터 리스너에 TLS 붙이기
+
+위 Serve 매핑이 공개하는 것은 **관리** 포트뿐입니다. 관리 포트는 `/v1/*`, `/healthz`, `/readyz`를 제공하지 않으므로, 그것만으로는 원격 클라이언트가 쓸 수 있는 데이터 경로가 생기지 않습니다. opencodex는 TLS를 직접 종료하지도 않습니다. 리스너는 평문 HTTP이고 HTTPS는 언제나 운영자가 세운 프런트엔드가 담당합니다.
+
+데이터 경로도 Serve로 공개할 수 있습니다. HTTPS 포트를 하나 더 쓰면 됩니다. macOS에서는 한 단계가 더 필요합니다. Tailscale Serve는 `127.0.0.1`로만 프록시하기 때문에 노드의 tailnet 주소에 바인딩한 리스너를 가리킬 수 없고, App Store 버전 macOS 클라이언트는 원격 대상 자체를 거부합니다. 허브에 루프백 포워더를 띄우고 Serve가 그쪽을 보게 하세요.
+
+```bash
+# 루프백 TCP 포워더면 무엇이든 됩니다. socat은 그중 하나입니다. 데이터 리스너는
+# tailnet 주소에 묶여 있으므로 127.0.0.1:10100은 포워더가 쓸 수 있습니다.
+socat TCP-LISTEN:10100,bind=127.0.0.1,fork,reuseaddr TCP:100.64.0.10:10100 &
+
+tailscale serve --bg --https=8443 http://127.0.0.1:10100
+tailscale serve status   # 443 -> 10101, 8443 -> 10100 두 매핑이 모두 보여야 합니다
+```
+
+Serve가 받아 주는 HTTPS 포트는 제한적입니다. 포트가 허용됐다고 가정하지 말고 `tailscale serve status`로 매핑이 실제로 만들어졌는지 확인하세요.
+
+포워더는 허브와 같은 수명을 갖게 하세요. 백그라운드 셸 작업은 재부팅과 함께 사라지는데 서비스는 다시 올라오므로, 허브는 돌고 있는데 TLS로는 닿지 않는 상태가 남습니다. `ocx service install`과 나란히 launchd나 systemd로 실행하세요.
+
+연결할 때는 두 origin을 따로 적습니다. 위치 인자 URL이 **데이터** origin이고 `/readyz`와 `/v1/catalog`를 여기서 가져옵니다. `--management-url`은 pairing과 키 발급에 쓰는 대시보드 origin입니다. 둘이 같은 포트일 필요는 없습니다.
+
+```bash
+ocx connect https://hub-name.tailnet-name.ts.net:8443 \
+  --management-url https://hub-name.tailnet-name.ts.net \
+  --admin-token-stdin
+```
+
+`--management-url`을 생략하면 `/readyz` 응답이 알려 주는 `hub.managementPublicOrigin`을 씁니다. 두 origin이 다를 때는 명시하는 편이 분명합니다.
+
+**데이터 리스너를 `127.0.0.1`에 묶어서 질러가지 마세요.** 루프백 바인딩은 opencodex가 순수 로컬 배포를 알아보는 방식입니다. 데이터 키를 요구하지 않게 되는 대신, 요청의 `Host` 헤더까지 루프백이어야 합니다. TLS 프런트엔드는 `Host: hub-name.tailnet-name.ts.net`을 그대로 전달하므로 `/v1/catalog`는 `403 origin_rejected`로 답하고, 그 검사를 하지 않는 `/readyz`는 여전히 `200`을 냅니다. 배포는 멀쩡해 보이는데 모델은 쓰지 못합니다. 요청 경로 어디에서도 `X-Forwarded-Host`를 읽지 않으므로 프런트엔드가 고쳐 줄 수도 없습니다. 리스너는 tailnet 주소에 두세요. 그러면 키 검사는 계속 켜져 있고 `Host` 검사는 적용되지 않습니다.
+
+`0.0.0.0`에 묶어도 됩니다. 그러면 루프백으로도 닿으므로 포워더가 필요 없습니다. 다만 데이터 포트가 모든 인터페이스에 열리므로, 다른 네트워크가 문제되지 않는 호스트에서만 쓰세요.
+
+Serve가 올라온 뒤에는 HTTPS 데이터 origin에 대고 `/readyz`, 인증된 `GET /v1/catalog`, 실제 모델 요청 1회를 다시 확인하세요.
 
 ## 헤드리스 OAuth
 
@@ -134,6 +187,7 @@ docker compose up -d
 - `.prev` 복구가 필요하면 두 파일을 지우지 말고 임시 권한과 함께 `ocx connect rotate`를 다시 실행하세요.
 - `hub-too-new` 또는 `hub-too-old`가 나오면 메시지가 가리키는 오래된 쪽을 업그레이드하세요. 불일치는 로컬 파일을 쓰기 전에 차단됩니다.
 - pairing 코드는 일회용이며 반복 실패는 429로 제한됩니다. 코드를 잃었거나 소진했다면 새로 만드세요.
-- 루프백이 아닌 HTTP pairing은 `--allow-insecure-http`를 명시해야 합니다. 관리자 토큰은 HTTP로 보내지 않습니다.
+- 루프백이 아닌 HTTP pairing은 그대로 거부되며, 이를 끄는 플래그는 없습니다. 관리 origin을 HTTPS 뒤에 두거나 루프백에서 pairing하세요. 관리자 토큰은 HTTP로 보내지 않습니다.
+- `/readyz`는 `200`인데 `/v1/catalog`가 `403 origin_rejected`를 낸다면, 데이터 리스너가 TLS 프런트엔드 뒤에서 루프백에 묶여 있는 것입니다. 위의 「데이터 리스너에 TLS 붙이기」를 보세요.
 - 브라우저 로그아웃/만료는 해당 원격 세션만 끊습니다. 데이터 키와는 별개입니다.
 - 연결 해제 후 남은 키는 허브의 **Integrations → API Keys**에서만 폐기할 수 있습니다.
