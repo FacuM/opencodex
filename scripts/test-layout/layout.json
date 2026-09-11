@@ -332,6 +332,7 @@
     "cli-codex-log-guard-protection.test.ts": "cli",
     "cli-codex-log-guard.test.ts": "cli",
     "cli-config-command.test.ts": "cli",
+    "cli-connect-readiness.test.ts": "cli",
     "cli-dispatch.test.ts": "cli",
     "cli-dto-fidelity.test.ts": "cli",
     "cli-export-command.test.ts": "cli",
