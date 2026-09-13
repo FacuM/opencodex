@@ -29,6 +29,7 @@ import {
   bindReasoningReplayScope,
   commitReasoningReplayServingIdentity,
   reasoningReplayCodexCredentialIdentity,
+  reasoningReplayCredentialIdentity,
   reasoningReplayDestinationIdentity,
   durableReplayDestinationIdentity,
   durableReplayCredentialIdentity,
@@ -482,7 +483,7 @@ const runTurnAdapterSseResponses = new WeakSet<Response>();
  * Adapters whose continuation state must survive Codex's store:false requests.
  */
 export function adapterNeedsForcedContinuation(name: string): boolean {
-  return name === "kiro" || name === "cursor";
+  return name === "kiro" || name === "cursor" || name === "zcode";
 }
 
 export function sidecarOutcomeRecorder(
@@ -630,6 +631,14 @@ function bindRouteReasoningReplayScope(args: {
       codexDurableHandle ?? undefined,
       provider.headers,
       durableSalt,
+    );
+  } else if (provider.authMode === "local" && adapterName === "zcode") {
+    // ZCode credentials stay inside the official local runtime. The non-secret provider/account
+    // slot is enough to owner-fence persisted continuation metadata; the adapter's runtime scope
+    // independently rejects sessions after a Desktop reconnect or account/profile change.
+    credentialIdentity = reasoningReplayCredentialIdentity(
+      "local",
+      provider.zcodeAccountId ?? "desktop",
     );
   } else if (provider.authMode !== "local") {
     credentialIdentity = reasoningReplayKeyCredentialIdentity(provider);
