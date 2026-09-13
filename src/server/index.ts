@@ -68,6 +68,7 @@ import { activateLab, labActivationRequired } from "../lib/lab-activation";
 import { runOpenAiTierStartupMigration } from "../providers/openai-tier-startup";
 import { runAlibabaRegionStartupMigration } from "../providers/alibaba-region-startup";
 import { runModelRenameStartupMigration } from "../providers/model-rename-startup";
+import { runDevinProviderMergeStartupMigration } from "../providers/devin-provider-merge-migration";
 import { isCanonicalOpenAiForwardProvider, OPENAI_CODEX_PROVIDER_ID } from "../providers/openai-tiers";
 import { providerCodexAccountMode } from "../providers/registry";
 import { comboPublicModelId } from "../combos/identifiers";
@@ -1000,7 +1001,11 @@ export function startServer(port?: number, deps: StartServerDeps = {}): Server<W
   // even if OPENCODEX_HOME changes underneath a long-lived process.
   const startupConfigDir = getConfigDir();
   const startupConfig = migrateStartupSubagentModels(
-    runModelRenameStartupMigration(runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig()))),
+    runModelRenameStartupMigration(
+      runDevinProviderMergeStartupMigration(
+        runAlibabaRegionStartupMigration(runOpenAiTierStartupMigration(loadConfig())),
+      ),
+    ),
   );
   // Reconcile disk-backed presets first: it replaces provider rows and must not undo
   // an in-memory wire upgrade when that upgrade's persistence is temporarily unavailable.
