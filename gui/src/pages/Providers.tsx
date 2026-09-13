@@ -458,7 +458,10 @@ export default function Providers({ apiBase }: { apiBase: string }) {
     });
   }, [apiBase, fetchConfig, fetchOauth]);
 
-  const bumpModelsRefresh = () => setModelsRefreshToken(n => n + 1);
+  const bumpModelsRefresh = useCallback(() => setModelsRefreshToken(n => n + 1), []);
+  const refreshProviderStateAfterNestedMutation = useCallback(() => {
+    void fetchConfig().finally(bumpModelsRefresh);
+  }, [fetchConfig, bumpModelsRefresh]);
 
   const { cancelLoginOAuth, loginOAuth, logoutOAuth } = useProvidersOAuth({
     apiBase, t, aliveRef, accountSets, setAccountSets,
@@ -646,6 +649,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
             onSetDisabled={setProviderDisabled}
             onSetDefault={name => { void setDefaultProvider(name); }}
             onUpdateProvider={updateProvider}
+            onProviderStateMutation={refreshProviderStateAfterNestedMutation}
             codexController={codexPool}
           />
           );
