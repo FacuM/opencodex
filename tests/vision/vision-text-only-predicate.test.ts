@@ -43,8 +43,22 @@ describe("isModelTextOnly (#1024)", () => {
   });
 });
 
+
+test("explicit capability keys are exact and take precedence over legacy declarations", () => {
+  const config = provider({ noVisionModels: ["ModelA"], modelCapabilities: { ModelA: { inputModalities: ["text", "image"] }, model: { inputModalities: ["text"] } } });
+  expect(isModelTextOnly(config, "ModelA")).toBe(false);
+  expect(isModelTextOnly(config, "model")).toBe(true);
+  expect(isModelTextOnly(config, "MODEL")).toBe(false);
+  expect(isModelTextOnly(config, "model:variant")).toBe(false);
+  delete config.modelCapabilities!.ModelA;
+  expect(isModelTextOnly(config, "ModelA")).toBe(true);
+});
+
 test("ZCode transport requires vision adaptation for every model even with native image metadata", () => {
   for (const id of ["builtin:zai-coding-plan/GLM-5.3", "builtin:zai-coding-plan/GLM-5.3-Flash", "future-model"]) {
-    expect(isModelTextOnly(provider({adapter:"zcode",modelInputModalities:{[id]:["text","image"]}}),id)).toBe(true);
+    expect(isModelTextOnly(provider({
+      adapter: "zcode",
+      modelInputModalities: { [id]: ["text", "image"] },
+    }), id)).toBe(true);
   }
 });

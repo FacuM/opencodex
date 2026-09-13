@@ -1,5 +1,8 @@
 # GUI And Management API
 
+The configuration-only [plaintext V2 contract](subagents.md#plaintext-v2-agent-messages)
+is scoped to canonical ChatGPT Responses forwarding; other source-area behavior described here is unchanged.
+
 ## Dashboard serving
 
 The bundled React dashboard is built into `gui/dist` and served by the same Bun proxy. `ocx gui`
@@ -122,16 +125,17 @@ this document owns is which module holds which area and what invariant that area
 | Subagents | Read/write the featured `subagentModels` list capped at five ids. `GET/PUT /api/injection-model` manages the shared delegation model/effort selection, the independent OpenCodex guidance switch, and the default-off `syncCodexSubagentDefaults` opt-in for native Codex subagent defaults. When OpenCodex owns the active Codex routing, native `[agents]` defaults apply to newly created Codex tasks after sync/restart; external user-managed provider configs remain untouched. The defaults do not cause delegation and preserve existing user-owned defaults rather than overwriting them. PUT is partial-update: absent keys are unchanged, `null` clears, and non-object bodies are rejected with 400 before field validation. `syncCodexSubagentDefaults: true` requires a nonblank `model` and a supported Codex reasoning effort when effort is set; clearing `model` (null/empty) always clears effort and disables native-default sync even when the stored effort was invalid. |
 | V2 / Multi-agent mode | `GET/PUT /api/v2` — reports/sets the codex `multi_agent_v2` feature flag, the 3-state `multiAgentMode` override (`v1`/`default`/`v2`), the `keepNativeChatGptOnV1` hybrid pin, and the logical maximum thread count. Selecting `v2` normally enables the native flag; with the hybrid pin it disables that global override so native rows can resolve to v1 while routed rows resolve to v2. Selecting `v1` disables the flag; `default` leaves it unchanged. PUT rejects an explicit enabled flag that conflicts with the selected mode or hybrid pin. Every transition preserves the logical thread limit, is rollback-safe, and resyncs the catalog. GET and successful PUT also return stored `multiAgentModeHintText` plus response-only `multiAgentModeHintRecommendation: { text, revision }`; the recommendation is not a writable or persisted config field. |
 | Logs & Debug | One sidebar entry (`/#logs`) with two tabs. Logs tab: request/runtime logs for local diagnosis. `LogsFilterBar` owns controls over the shared `LogFilterState`; `filterLogs` composes filters over the loaded ring. The logs envelope adds `generatedAt` (proxy epoch milliseconds); the page advances that sample with monotonic elapsed time and retains a browser-clock fallback for older proxies. Reset returns focus to the stable All surface radio. Provider/model options include attempts, model choices match normalized complete identities, and relative-time filtering refreshes every 30 seconds while the Logs tab is active, independently of network auto-refresh. Debug tab (`/#logs/debug`; legacy `/#debug` deep links redirect there): provider + usage toggles, refresh/follow log viewer. `GET/PUT /api/debug`; `GET /api/debug/logs` and `GET /api/debug/usage-logs` (monotonic `after` cursor, legacy `since` accepted). CLI: `ocx debug provider|usage …` (both streams via running proxy API). |
-| Usage | `GET /api/usage` aggregate read-only summary derived from the complete `~/.opencodex/usage.jsonl`; the ledger is streamed in fixed 1 MiB chunks, so the former read-byte and parsed-row caps cannot omit its prefix. The response includes measured / reported / unreported / unsupported / estimated counts, a daily zero-filled grid, and model and provider breakdowns. Never exposes prompts. |
+| Usage | `GET /api/usage` read-only aggregates of readable rows from `~/.opencodex/usage.jsonl`; the ledger is streamed in fixed 1 MiB chunks, so the former read-byte and parsed-row caps cannot omit its prefix. Oversized skipped rows produce positive `usageIncomplete` metadata. The response includes measured / reported / unreported / unsupported / estimated counts, a daily zero-filled grid, and model and provider breakdowns. Never exposes prompts. |
 | System | `POST /api/system/restart` restarts the proxy in place. Local CLI/tray callers first attest the exact runtime PID and port, then send a process-scoped HMAC capability bound to that method, path, PID, and port; the capability authorizes no other management route and is invalid after replacement. The caller observes one absolute deadline and accepts success only after a different runtime PID is healthy on the same port. `GET /api/system/health` is the authenticated scalar-only identity used by shared-plane Dashboard status and restart reconnect polling; it does not widen a Remote Hub management ingress to unauthenticated `/healthz`. `GET /api/system/memory` — service-process runtime/memory identity (pid, Bun version/revision, optional `bunRuntimeSource` provenance, platform, RSS/heap/external/ArrayBuffers scalars, observed memory = max(RSS, external, ArrayBuffers), `bun:jsc` heap context, streamMode + eager-relay gate decision, watchdog snapshot sliced to the last 60 samples) plus privacy-safe `appOwnedBytes` retained-store totals/counters under static store ids. Its response-state block also reports spill-write `initial`/`healthy`/`degraded` status, a consecutive-failure streak, fixed error class, and failure/success timestamps. A successful publication clears the streak in the same process; raw error text and paths never enter this surface. Scalar-only payload; dashboard/admin callers use the standard management gate, while `ocx doctor` may use only the exact process-scoped local-read capability. It must never move to unauthenticated `/healthz`. |
 | Stop | `POST /api/stop` — restore native Codex, stop any installed service, and exit the proxy. |
 | Diagnostics/sync | `src/server/management/config-routes.ts` — `GET /api/diagnostics/project-config` reports project-level Codex config that bypasses managed routing; `POST /api/sync` re-runs catalog/config sync. The diagnostic reports the bypass; it does not rewrite the project file. |
-| Sidecar/shadow-call settings | `src/server/management/config-routes.ts` — `GET/PUT /api/sidecar-settings` and `GET/PUT /api/shadow-call-settings`. PUT accepts model and backend (web-search union: openai/anthropic/xai/gemini/exa; xAI is live through stored Grok OAuth, while Gemini/Exa remain inert until their executors ship) plus validated `webSearch.xSearch`, optional `webSearch.exaApiKey` (write/clear only — never echoed by GET or the PUT response; redact.ts strips it from logs), `webSearch.reasoning`, `vision.reasoning`, `vision.enabled`, `vision.maxDescriptionsPerTurn`, and `vision.timeoutMs`; the read and PUT-response payload reports model, backend, reasoning, enabled, the vision per-turn limit, and timeout. `timeoutMs` is validated against the runtime integer bounds in `src/vision/timeout-bounds.ts`. Provider/OAuth credentials live in their stores; `exaApiKey` is the one sidecar-owned secret and follows the write-only contract above. Both shadow-call responses also report the resolved `sourceModels` — the prefixes the runtime actually intercepts (`src/lib/shadow-call.ts`, default `gpt-5.4-mini` + `gpt-5.6-luna`), so no client hard-codes a helper slug that a Codex release can invalidate. |
+| Sidecar/shadow-call settings | `src/server/management/config-routes.ts` — `GET/PUT /api/sidecar-settings` and `GET/PUT /api/shadow-call-settings`. PUT accepts model and backend (web-search union: openai/anthropic/xai/gemini/exa; xAI is live through stored Grok OAuth, while Gemini/Exa remain inert until their executors ship) plus validated `webSearch.xSearch`, optional `webSearch.exaApiKey` (write/clear only — never echoed by GET or the PUT response; redact.ts strips it from logs), `webSearch.reasoning`, `vision.reasoning`, `vision.enabled`, `vision.maxDescriptionsPerTurn`, and `vision.timeoutMs`; the read and PUT-response payload reports model, backend, reasoning, enabled, the vision per-turn limit, and timeout. `timeoutMs` is validated against the runtime integer bounds in `src/vision/timeout-bounds.ts`. Provider/OAuth credentials live in their stores; `exaApiKey` is the one sidecar-owned secret and follows the write-only contract above. Both shadow-call responses also report the resolved `sourceModels` — the prefixes the runtime actually intercepts (`src/lib/shadow-call.ts`, default `gpt-5.6-luna`; the retired `gpt-5.4-mini` stays available as an explicit `sourceModels` entry for 0.144.x clients), so no client hard-codes a helper slug that a Codex release can invalidate. |
 | Storage | `src/server/management/logs-usage-routes.ts` — `GET /api/storage`, `POST /api/storage/cleanup/preview` and `/api/storage/cleanup`, `GET /api/storage/trash`, `POST /api/storage/trash/restore`, and `GET/PUT /api/storage/cleanup-policy` plus `POST /api/storage/cleanup-policy/run`. `GET /api/storage/cleanup-policy/test-stream` and `GET /api/storage/trash/restore/test-stream` exist for progress-stream testing. Cleanup takes an explicit `mode`: `quarantine` moves to trash and is restorable, `permanent` is not. The caller must name the mode — there is no default that silently deletes. |
 | Provider quotas and tests | `src/server/management/provider-routes.ts` — `GET /api/provider-quotas`, `POST /api/providers/test`, `GET/PUT /api/provider-context-caps`, `GET /api/provider-presets`. A quota read may be served from cache or force-refreshed; absent quota data is reported as unknown rather than as a measured zero. |
 | Models and visibility | `src/server/management/model-routes.ts` — `GET /api/models`, `PUT /api/disabled-models`, `PUT /api/model-visibility`, `PUT /api/selected-models`, `GET/POST /api/custom-models`. Visibility writes trigger catalog sync through the owning server path. |
 | Effort and fallback | `src/server/management/agent-settings-routes.ts` — `GET/PUT /api/effort-caps`, `/api/subagent-models`, `/api/subagent-model-fallback`. Caps clamp; they do not reject. |
 | Grok and Claude integrations | `src/server/management/agent-settings-routes.ts` — `GET /api/grok`, `PUT /api/grok/selection`, `POST /api/grok/apply`, `GET/PUT /api/claude-desktop`, `POST /api/claude-desktop/apply`, `GET /api/claude-desktop/status`, `GET/PUT /api/claude-code`. Apply writes an external app's profile, so its status probe must read the same resolved path it writes (see [`responses.md`](transports/responses.md)). |
+| Grok reset coupons | `src/server/management/grok-coupon-routes.ts` — `GET /api/grok/reset-coupons`, `POST /api/grok/reset-coupons/consume`. The dashboard owner is `gui/src/hooks/useGrokResetCoupons.ts` with `gui/src/components/provider-workspace/GrokResetCoupons.tsx`, wired into the xAI OAuth rows of `ProviderAuthPanel`. Redemption truth is the settled ledger `code`, not the HTTP status: a replayed failure returns 200 with `replayed: true`. See [`providers/xai-grok.md`](providers/xai-grok.md). |
 | Combos | `src/server/management/combo-routes.ts` — `GET/PUT/DELETE /api/combos` own provider combination and failover definitions. |
 | Codex accounts | `src/codex/auth-api.ts` — `GET/POST/DELETE /api/codex-auth/accounts`, `PUT /api/codex-auth/accounts/alias`, `PUT /api/codex-auth/accounts/pause`, `PUT /api/codex-auth/accounts/pause-exhausted`, `POST /api/codex-auth/accounts/clear-cooldown`, `GET/PUT /api/codex-auth/active`, `PUT /api/codex-auth/auto-switch`, `PUT /api/codex-auth/pool-strategy`, `PUT /api/codex-auth/failover`, `GET /api/codex-auth/quota`, `GET /api/codex-auth/reset-credits` with `POST /api/codex-auth/reset-credits/consume`, and the login flow `POST /api/codex-auth/login`, `POST /api/codex-auth/login/code`, `POST /api/codex-auth/login/cancel`, `GET /api/codex-auth/login-status`. Per-account quota activation uses the existing `GET/PUT /api/settings` surface and `src/codex/quota-auto-refresh.ts`, keeping scheduled spending separate from credential/authentication mutation. Account ids are opaque handles and are serialized so the GUI can address an account; emails are masked and tokens are never serialized. New-account config commits add UI-managed selector bindings in the same config save; deletion deliberately retains existing bindings for fail-closed exact routing and re-add stability. Account mutations request catalog convergence only after config durability and expose only the boolean `catalogRefreshPending` completion projection. |
 | Sidebar | `src/server/management/sidebar-routes.ts` — `GET/POST /api/github/star` and `GET /api/update/badge`. Sidebar state is cosmetic; a failed fetch degrades silently. |
@@ -281,7 +285,37 @@ recovery; operators no longer need to delete `update-job.json` after a dead work
 The dashboard is a local control surface, not a separate service. It should reflect the same config
 and catalog invariants documented in this folder rather than inventing parallel state.
 
+Codex quota cards consume the display cache from `src/codex/quota.ts`. A partial refresh
+removes an omitted short tuple whose reset deadline has elapsed, so a stale model-derived
+5h row does not persist on a weekly-only account. This is independent of the main-account
+hard-lock evidence and reset-notification history; their retention rules are documented in
+[OpenAI account modes](providers/openai-tiers.md#quota-cache-and-short-window-history).
+Codex account panels expose no Spark quota toggle or setting and retain quota refresh, pause/resume, selection order, reset-credit confirmation and Advanced settings; account/provider quota DTOs suppress retired windows upstream of the generic quota renderer, under [OpenAI quota scopes](providers/openai-tiers.md#public-provider-contract).
+
 ## Dashboard surfaces
+
+`src/server/management/api-access.ts` publishes an `audio` projection through the
+existing `/api/keys` response in `src/server/management/oauth-account-routes.ts`.
+URLs derive from the same advertised inference base as text APIs, with HTTP(S)
+mapped to WS(S). Configuration flags inspect enabled canonical providers only;
+they do not read credentials, inspect account health or prove entitlement.
+`gui/src/pages/api-keys-utils.ts` validates the same projection on network and
+cache reads. Missing or malformed audio metadata disables only audio controls.
+
+Connections/API keys has separate Dictation and Live Voice sections in
+`gui/src/components/apikeys-workspace/AudioApiPanel.tsx`. Transient data keys never
+enter caches or generated samples. `gui/src/audio-api-client.ts` owns bounded
+uploads and a connection-only native voice probe; `gui/src/api.ts` sends uploads
+without management auth injection or 401 recovery. Voice readiness requires a
+nonterminal session acknowledgment with `session.id`, not merely socket open.
+Changing keys, inference metadata, API origin or leaving the active panel releases
+requests/sockets. Only allowlisted event types and localized error categories are
+displayed. Tests live in `gui/tests/audio-api-client.test.ts`,
+`gui/tests/audio-api-panel.test.tsx`, `gui/tests/api-auth-memory.test.ts` and
+`tests/server/api-access-endpoints.test.ts`.
+The API workspace gives `gui/src/components/section-tabs.tsx` its mobile reading
+line so scroll-spy and the top-bar offset agree; other consumers keep their
+existing reading line. The section strip stays one row at every width.
 
 Provider Overview consumes the existing shared `add-provider-presets` resource for sponsor
 presentation. `matchingWorkspacePreset` requires the configured id, adapter and normalized
@@ -301,8 +335,8 @@ single forms, and the shell pattern is the part worth keeping stable:
 | Storage | Rail plus cleanup and trash detail (`gui/src/components/storage-workspace/`). |
 | Subagents | Featured-roster selection workspace (`gui/src/components/subagents-workspace/`). |
 | Combos | Rail, detail panel, and an add flow (`gui/src/components/ComboWorkspace.tsx`). |
-| Add provider | Catalog browser plus form and OAuth panes (`gui/src/components/provider-catalog/`, `gui/src/components/AddProviderModal.tsx`). |
-| Codex accounts | Account pool cards, add-account flow, switch and reset modals (`gui/src/components/CodexAccountPool.tsx`, `gui/src/components/AddCodexAccountModal.tsx`), plus the generic account-targeting picker opt-in on `gui/src/pages/codex-set-multiauth.tsx`. Add/delete/login completion is projected to one boolean before presentation; pending catalog work is a warning, not a failed account mutation. |
+| Add provider | Catalog browser plus form and OAuth panes (`gui/src/components/provider-catalog/`, `gui/src/components/AddProviderModal.tsx`). The catalog browses four tabs — Accounts, Free, Local, Paid — where Local is a catalog-only bucket peeled out of `bucketPresets` after `presetTier` has classified; the workspace `providerTier` stays three-way, so the rail, the free-paid sort and the Free count still treat a local runtime as free. Search sits above the tabs and reaches every tab at once: while a query is live the list renders all four groups with headings and the strip becomes jump chips with counts rather than a tablist, because moving the selected tab would change the row kind under the user (a preset-select button becomes a login row). ArrowDown from the search input focuses the first enabled result action; if none is available, focus stays in the input. The tab strip wraps within narrow modals. Every nonempty note has a full-text button so narrow rows never hide content permanently; the native note dialog closes during teardown and restores focus to its trigger. Provider notes clamp to two lines and open in full in a stacked native `<dialog>` owned by `AddProviderModal`, which also owns the search text so its `window` Escape handler can unwind popup, then query, then dialog. |
+| Codex accounts | Account pool cards, add-account flow, switch and reset modals (`gui/src/components/CodexAccountPool.tsx`, `gui/src/components/AddCodexAccountModal.tsx`), plus the generic account-targeting picker opt-in on `gui/src/pages/codex-set-multiauth.tsx`. Add/delete/login completion is projected to one boolean before presentation; pending catalog work is a warning, not a failed account mutation. The main card's native-main device reauth (#3898) is owned by `gui/src/components/use-main-device-reauth.ts`: the dedicated `/api/codex-auth/main/reauth-device` namespace only — never the pool login route — with flowId-owned polling, an allowlisted verification URL, and no token fields accepted from payloads. |
 | Dashboard overview | Overview, Providers, and Models tabs at the page level (`gui/src/pages/Dashboard.tsx`), the 30-day token and coverage stats in the overview head (`gui/src/pages/dashboard-overview-head.tsx`), and the effort-cap, injection, maintenance, sidecar, and memory panels below it (`gui/src/pages/dashboard-overview-panels.tsx`). |
 
 Rail selection is component-local state today, so a reload returns to the workspace's default
@@ -328,6 +362,8 @@ and exact account binding only—there are no built-in Personal/Work roles. A pe
 keeps the saved state and renders fixed `ocx sync` guidance without server/account detail.
 
 ## Usage accounting
+
+`src/server/hub-usage.ts` serves `GET /v1/usage` on hubs for an explicit configured data key. The authenticated key selects the aggregate; query parameters cannot select an API-key identity. Unscoped environment/admin credentials and loopback bypass are not admitted. The response projects only this client's numeric totals, provider/model/day rows and incomplete-history metadata through `src/remote/hub-usage.ts`; accounts, raw records and key IDs are omitted. Unknown fields are stripped at every object boundary and the serialized body is capped at 1 MiB.
 
 Custom usage windows are immutable bounds on the streaming accumulator, applied to each
 ledger entry before attribution and daily aggregation. The filtered aggregate cache includes
@@ -401,7 +437,7 @@ An opt-in shadow-call rewrite persists the bounded, redacted original helper mod
 request content or inferring a helper subtype from timing.
 `src/usage/summary.ts` turns that file into the `/api/usage` shape — totals, daily zero-filled
 grid, model and provider breakdowns, and `measured / reported / unreported / unsupported / estimated` counts.
-The management route streams the complete ledger from its beginning in fixed 1 MiB chunks on a
+The management route scans the ledger from its beginning in fixed 1 MiB chunks on a
 cold rebuild, then retains compact numeric aggregate state and resumes at the last verified LF for
 ordinary appends. It does not retain the full input or a normalized object for every request, and
 neither the old byte window nor the parsed-entry cap can discard an earlier prefix before range and
@@ -426,6 +462,7 @@ selectors, a vendor-only inferred price is unavailable; exact provider and user 
 eligible. Missing trace evidence is not reconstructed from today's configuration. Provider-detail
 model shares use that provider's token total, not the global total. Unknown reserved `policy/`
 selectors are rejected before upstream dispatch; historical rows remain unchanged.
+Expected-price overlays are estimates, not billing reproductions: the Z.AI GLM rows (`zai`, `zhipu-bigmodel`, `zhipu-bigmodel-coding`, `zhipu-bigmodel-responses`) display the published z.ai USD list price on surfaces that actually bill by Coding Plan subscription or CNY-tiered domestic PAYG, and every such row is marked `verified-derived` so the estimate flag reaches the UI.
 
 The management API retains the compact accumulator plus bounded query summaries; it never retains
 normalized per-request rows after a response. File identity changes, shrinkage, same-size metadata
@@ -437,6 +474,8 @@ batches, so memory stays bounded and unrelated management requests remain servic
 large existing log. The first read is proportional to ledger size; steady-state refresh work is
 proportional to newly appended bytes. The Dashboard polls its 30-day usage summary independently once
 per minute, so usage work cannot delay health/provider/settings state or run every five seconds.
+
+An oversized row is skipped inside the scanner bound without shortening identities. Accumulators keep normal rows plus `usageIncomplete` / `usageIncompleteReason: "oversized_rows"` on caches and rollups; append ORs the flag and a rebuild recalculates it. Invalid-row counts are not sticky, and absence of the flag is not completeness. GUI caches warn on Usage, Dashboard, provider and key views; CLI warns in human output only; most-used order save refuses an incomplete snapshot. Quota surfaces stay separate. Legacy truncation fields keep their meaning; read/mutation failures still fail closed.
 
 `usage.jsonl` is an append-only runtime ledger. A manual in-place edit earlier than the trailing
 64 KiB checkpoint followed by file growth is intentionally outside the incremental detector's
@@ -477,10 +516,11 @@ use the `[ocx:<adapter>:<event>]` prefix, go to the proxy terminal, and are buff
 `ocx debug provider logs` / `ocx debug provider logs -f`. Usage JSONL tails with
 `ocx debug usage logs [-f]`. Separate from provider buffered logs above.
 
+The shared Responses path follows the [bounded multipart recovery contract](subagents.md#multipart-encrypted-task-recovery); credential admission and retry policy remain unchanged.
+
 ## Remote credentials and bounded sessions
 
 Data keys authorize only the data matrix and authenticated catalog. Admin credentials authorize ordinary management and key rotation but cannot mint, exchange, or refresh a `gui-session`. Pairing grants are digest-only, origin-bound, one-use, capped at 128 live grants, burned after five grant failures, and source-limited after ten failures in ten minutes with at most 1,024 source buckets. `POST /api/session/logout` invalidates only the current origin/CSRF-authorized browser session.
-
 
 ### Model picker ordering settings
 
@@ -505,24 +545,56 @@ picker data resource so failure cannot erase the ordinary model inventory; Apply
 the resource's generation fence, and Most used reads usage only on explicit Apply. Stored mode
 survives availability drift, while complete/native custom orders await explicit replacement.
 
+The shared atomic replacement publisher also identifies explicit Remote Workspace file writes as `remote-workspace`. Remote Workspace uses a separate, explicitly enabled server surface with structural WebSocket callbacks and awaited per-server cleanup; [its contract](remote-workspace.md) owns that integration and records its isolated owner and support limits.
+
+Listener startup diagnostics follow [the runtime lifecycle contract](runtime.md#lifecycle); malformed optional listener blocks follow [config loading](config.md#config-surface).
+
+Chat helper admission in `src/server/responses/core.ts` follows the [deferred stored-main contract](providers/openai-tiers.md): only a needed Direct OpenAI helper claims stored main, after terminal vision, routed vision and search exclusions.
+
+## Combo editor routing quota
+
+`src/server/management/provider-routes.ts` projects `routingQuota` after each quota read using the
+current provider configuration and [scoped inference evidence](runtime.md#scoped-provider-quota-for-combo-selection).
+The DTO carries only state, observation time and an exclusive `validUntil`; cached display reports
+and private credential bindings are unchanged. Known states expire within 30 minutes; exhaustion
+may expire earlier when the runtime predicate clears at a reset boundary, accounting for other
+windows and persistent USD blockers.
+
+`gui/src/combo-workspace-data.ts` accepts only this projection for quota-based Save/Create blocking.
+Missing, invalid or expired evidence is unknown. `gui/src/pages/Combos.tsx` wakes at the rendered
+expiry, including a deadline crossed before effects run, rechecks activation and visibility, and
+refreshes quota with Combo data while preserving drafts. Each successful quota snapshot also
+advances the observation clock, so a retained older row cannot defer evaluation of a fresh row.
+
+Optional Codex transport-hint suppression is scoped to canonical Responses client output;
+its defaults and exclusions are owned by [Responses transport](transports/responses.md).
+
+The provider editor field policy exposes `showThinkingSummary` as a boolean provider option; it controls Responses summary defaults without a dashboard rendering change. See [Google provider](providers/google.md).
+
+## Paginated history writer boundary
+
+`src/codex/history-provider.ts` refuses external writes to paginated or migration-capable history. `src/codex/inject.ts` checks affected rows and manifest-owned restore targets before and after config/profile/journal changes, including successful journal and fallback restores, and compensates detected migration. Failed config restore stops later catalog/history work and rolls back a coordinated remove transition. See the [history writer contract](codex-home.md#paginated-history-writer-boundary) for guarantees and concurrent-writer limits.
+
+Codex pool settings and their consumers follow the [reset-first ordering contract](providers/openai-tiers.md#reset-first-account-ordering), including independent-quota fallback and preserved affinity. Codex account DTOs and cards expose the routing-plan exclusion separately from credential health; the [plan exclusion contract](providers/openai-tiers.md#automatic-pool-plan-exclusions) also governs CLI projection. Private pool credential metadata follows the [quota-history publication identity contract](providers/openai-tiers.md#quota-history-publication-identity); credential-only and account DTO projections omit it.
+
+Claude replay carries [Go conversation affinity](data-planes/inbound-compat.md#claude-affinity-at-final-go-dispatch) privately to final dispatch; preliminary route selection does not inject Go-only headers.
+
+The connected browser shell reuses `SESSION_UNAVAILABLE_EVENT` and its shared-session readiness state. Terminal 401 recovery failure exposes pairing without a restart instruction; a newer session or aborted request cannot publish an unavailable notice. Successful pairing changes dashboard resource revalidation dependencies, so retained failed stores are explicitly refreshed. Dashboard reads distinguish authentication, permission denial, request failure, invalid payload and transport failure; protected data is hidden for authentication/denial, while other failed refreshes label retained data as stale.
+
+Cline journal Undo eligibility reads both native configuration files through the paired integration IO adapter; [the integration contract](clients/integrations.md#cline-paired-files) defines recovery.
+
+The existing dashboard file-client maps include Cline CLI and reuse its committed color mark. The export panel labels its download as a settings/catalog bundle; all locales explain that Undo restores both original files.
+
+Native Chat applies qualifying effort ceilings independently of model pins; pin selection precedes the cap and only pins or cap rewrites enter wire mapping. The [catalog effort contract](catalog.md#ultra-reasoning-level) records the V1/compaction exemptions and caller-preservation boundary.
+Pool quota producers and account commands follow the [bounded raw-observation contract](providers/openai-tiers.md#bounded-pool-quota-observations), separate from the latest display snapshot and capacity estimates. The account history response can include a [low-confidence effective capacity estimate](providers/openai-tiers.md#observed-effective-token-capacity); usage normalization retains local-answer provenance so local responses cannot supply samples. Account quota surfaces use [safe probe diagnostics](transports/inventory.md#account-quota-failure-diagnostics) separately from quota validity, credential health and routing authority.
+
+Combo child requests normalize effort and thinking controls against the selected target while retaining reasoning summaries; strict unknown targets preserve caller controls. The [Responses transport owner](transports/responses.md) documents this boundary, and native Chat removes effort only for an explicit empty declaration or no-reasoning model.
+
+Live sideband admission and its bounded upstream handshake follow the [runtime contract](runtime.md#live-sideband-handshake); the ordinary Responses WebSocket exchange remains separate.
+Dashboard overview polling observes authorization failures independently of stalled or rejected peer requests, cancels remaining child requests after a decisive result, and exposes resource-level deadline failures without rewriting them as authentication failures.
+
+The [explicit model-capability contract](config.md#explicit-per-model-capability-declarations) preserves operator declarations through provider storage and catalog capture; it does not infer upstream capability or change this surface's routing behavior.
+Exact [model input declarations](config.md#explicit-per-model-capability-declarations) now feed text-only eligibility and catalog hints; existing image-description/omission handling consumes them before the main upstream send.
+The raw provider editor round-trips `autoReviewModel` and `autoReviewModelOverrides` through editor-owned DTO fields. POST/PATCH/PUT share validation; PUT copies schema-normalized values into the persisted and live candidate before adoption. Canonical `openai` rejects these fields, including clear forms. Existing authentication, origin checks and stale-baseline protection still govern the writes. See [reviewer projection](catalog.md#provider-scoped-approval-reviewer).
 ## ZCode manual account lifecycle
-
-`gui/src/components/ZcodeAccountsPane.tsx` uses
-`src/server/management/zcode-account-routes.ts` for saved-account login, polling, completion,
-activation retry, rename and removal. These routes require a GUI-session principal; mutations
-require explicit consent. The official OAuth job uses a fresh private profile. Completion
-checks identity and protocol before registering an account-bound provider and converging the
-catalog; a partial result stays visible and retryable. No default selection or inference is
-part of this flow. Reconnect retains custom provider settings and rejects a different identity.
-Rename changes only generated labels; removal refuses busy/referenced accounts. In-progress
-OAuth jobs expire and do not survive restart; saved account profiles and bindings do.
-See [the ZCode account runtime contract](adapters/registry.md#zcode-saved-accounts).
-
-For ZCode, input-image description is the explicit exception to native-agent helper exclusion;
-see [ZCode vision input adaptation](adapters/registry.md#zcode-vision-input-adaptation). The configured
-vision provider may consume its own quota; main inference remains in official ZCode.
-
-The hardened ZCode boundary accepts only exact active-session events, canonicalizes protected paths in
-optional sandbox mode, distinguishes unavailable quota probes from valid empty entitlements, requires
-unique provider bindings and GUI-session-only Desktop metadata, and disables caller-tool capability
-for every combo containing a ZCode target.
+`gui/src/components/ZcodeAccountsPane.tsx` and `src/server/management/zcode-account-routes.ts` own GUI-session-only saved-account login, polling, activation retry, rename and removal. Explicit consent starts the official OAuth job in a private profile; completion verifies identity/protocol, registers one unique account-bound provider and converges the catalog without changing defaults or sending inference. Partial activation remains visible and retryable, reconnect preserves custom settings and rejects a different identity, removal refuses busy/referenced accounts, and only transient OAuth jobs expire on restart. Input images use the configured vision describer as the sole native-agent sidecar and may consume its quota; main inference remains in official ZCode. Exact active-session events, canonical optional-sandbox paths, honest unavailable quota, session-only Desktop metadata and no caller-tool capability for combos harden the boundary. See [the ZCode runtime contract](adapters/registry.md#zcode-saved-accounts).

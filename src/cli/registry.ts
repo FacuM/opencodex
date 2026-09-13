@@ -108,6 +108,17 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
     ],
   },
   {
+    name: "remote-workspace",
+    usage: "ocx remote-workspace <pair|agent|status>",
+    summary: "Pair this OCX-only computer with a hub and run its remote workspace executor.",
+    details: [
+      "Pair: ocx remote-workspace pair <hub-url> --pairing-code-stdin --root <absolute-path> [--toolchain-root <absolute-directory>] [--executor-helper <absolute-file>] [--name <device-name>]",
+      "Agent: ocx remote-workspace agent",
+      "Status: ocx remote-workspace status [--json]",
+      "Codex, Claude Code, Pi, provider logins, and API keys remain on the hub; only workspace tools execute here.",
+    ],
+  },
+  {
     name: "disconnect",
     usage: "ocx disconnect [--keep-catalog] [--json]",
     summary: "Restore local client state offline and clear the remote-hub connection.",
@@ -337,11 +348,12 @@ export const CLI_COMMANDS: CliCommandEntry[] = [
   { name: "api-key", usage: "ocx api-key <list|create|rotate|remove> ...", summary: "Alias of ocx access key." },
   {
     name: "export",
-    usage: "ocx export --client <opencode|pi|omp|hermes|openclaw|kimi|gajae|dsh|mcode|zcode|prime|aside|raycast|omo> [--json] [--out <path>] [--force]",
-    summary: "Print a client config (OpenCode, Pi, OMP, Hermes, OpenClaw, Kimi Code, gjc, DeepSeek Harness, MiniMax Code, ZCode, Prime Agent, Aside, Raycast, omo) wired to the running proxy.",
+    usage: "ocx export --client <opencode|pi|omp|hermes|openclaw|kimi|gajae|dsh|mcode|zcode|prime|aside|raycast|omo|cline> [--json] [--out <path>] [--force]",
+    summary: "Print a client config (OpenCode, Pi, OMP, Hermes, OpenClaw, Kimi Code, gjc, DeepSeek Harness, MiniMax Code, ZCode, Prime Agent, Aside, Raycast, omo, Cline) wired to the running proxy.",
     details: [
       "--json prints the generated document as JSON on stdout; use --out for the client's native format.",
       "--out <path> writes the native config there and refuses to replace an existing file without --force.",
+      "Cline exports a two-document bundle: settings for providers.json and catalog for sibling models.json. Use integration client enable --client cline for a journaled write.",
       "The config never contains a real key; it carries a documented env reference or a non-secret loopback placeholder.",
       "The destination path is printed for merging by hand — ocx never writes your real client config.",
     ],

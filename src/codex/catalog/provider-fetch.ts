@@ -602,6 +602,7 @@ function providerCatalogFingerprint(name: string, prov: OcxProviderConfig): Reco
     maxOut: prov.modelMaxOutputTokens ?? null,
     autoCompact: prov.modelAutoCompactTokenLimits ?? null,
     inMod: prov.modelInputModalities ?? null,
+    capabilities: prov.modelCapabilities ?? null,
     re: prov.modelReasoningEfforts ?? null,
     defRe: prov.modelDefaultReasoningEfforts ?? null,
     rsSum: prov.modelSupportsReasoningSummaries ?? null,
@@ -675,7 +676,9 @@ export function configuredContextWindow(prov: OcxProviderConfig, id: string): nu
 }
 
 export function configuredInputModalities(prov: OcxProviderConfig, id: string): string[] | undefined {
-  const modalities = modelRecordValue(prov.modelInputModalities, id);
+  const declared = Object.hasOwn(prov.modelCapabilities ?? {}, id)
+    ? prov.modelCapabilities?.[id]?.inputModalities : undefined;
+  const modalities = declared ?? modelRecordValue(prov.modelInputModalities, id);
   return Array.isArray(modalities) && modalities.length > 0 ? [...modalities] : undefined;
 }
 
@@ -1749,11 +1752,23 @@ async function fetchProviderModelsWithAuth(
     if (liveResult.ok) {
       // Live catalog is the source of truth — use the discovered base models
       // directly, not a filtered subset of the static seed.
-      const result = liveResult.models.map((id) => ({
-        id,
-        provider: name,
-        ...catalogHintsFromProviderConfig(name, prov, id, contextCap, metadataModelIdCaseFold, captured.effectiveAlias),
-      }) as CatalogModel);
+      //
+      // That extends to the context window. Cognition publishes no window
+      // anywhere, so the per-account catalog is the only first-party number,
+      // and the shipped static table is a degraded-mode guess that was wrong
+      // for nine of its eleven rows. The live value is applied first and the
+      // config hints run after it, so an explicit per-model override and an
+      // enabled Context cap still win — this only replaces the number nobody
+      // chose.
+      const result = liveResult.models.map((id) => {
+        const liveWindow = liveResult.contextWindows[id];
+        return {
+          id,
+          provider: name,
+          ...(liveWindow ? { contextWindow: liveWindow } : {}),
+          ...catalogHintsFromProviderConfig(name, prov, id, contextCap, metadataModelIdCaseFold, captured.effectiveAlias),
+        } as CatalogModel;
+      });
       const forCache = withConfiguredRetention(result, { retainComboTargets: false });
       if (!setCached(name, forCache, Date.now(), cacheGeneration)) {
         return observed(withConfiguredRetention(configured), "degraded");

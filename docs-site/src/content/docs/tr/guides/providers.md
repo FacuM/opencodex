@@ -140,7 +140,7 @@ ocx logout <saglayici>
 | `google-antigravity` | `google` | `https://daily-cloudcode-pa.googleapis.com` | Cloud Code Assist hattı üzerinden Google OAuth. Canlı keşif CCA'nın kimlik doğrulamalı `v1internal:fetchAvailableModels` uç noktasını kullanır ve oturum açmış hesap için kullanılabilir olan ajan modellerini yayınlar; sürdürülen katalog geri dönüş olarak kalır. |
 | `cursor` | `cursor` | `https://api2.cursor.sh` | Deneysel PKCE girişi, canlı HTTP/2 aktarımı ve hesap filtreli model keşfi. |
 | `devin` | `devin` | `https://server.codeium.com` | Deneysel, resmi olmayan Cognition/Devin köprüsü. Giriş tarayıcıda Auth0 oturumunu açar, ardından belirteci `RegisterUser` ile uzun ömürlü bir API anahtarına dönüştürür. Modeller hesaba göre `GetCascadeModelConfigs` ile keşfedilir; akış yalnızca Connect-RPC üzerindeki `runTurn` yolunu kullanır. Panel ön ayarında varsayılan olarak yer almaz. |
-| `devin-cli` | `devin-cli` | `https://cli.devin.ai` | Yerelde kurulu Devin CLI'yi Agent Client Protocol ile (`devin acp`, stdio üzerinde JSON-RPC) çalıştırır. Kimlik bilgilerini `devin auth login` sonrası CLI'nin kendisi taşır, bu yüzden opencodex hiçbir anahtar saklamaz. Çalıştırılabilir dosya `OPENCODEX_DEVIN_CLI_BIN` ile belirtilir; CLI'nin dosya okuyup yazmasına izin vermek için `OPENCODEX_DEVIN_CLI_ALLOW_TOOLS=1` açıkça ayarlanmalıdır, varsayılan reddetmektir. |
+| `devin-cli` | `devin` | `https://server.codeium.com` | Kurulu Devin CLI'nin zaten tuttuğu kimlik bilgisini içe aktarır (`devin auth login` bunu kendi `credentials.toml` dosyasına yazar), ardından `devin` sağlayıcısı gibi Cognition'ın Connect-RPC api-server'ı üzerinden akış yapar — tarayıcı girişi ve yapıştırılacak anahtar yok. Model listesi ve bağlam pencereleri hesabınızın kendi kataloğundan gelir. |
 | `github-copilot` | `openai-chat` | `https://api.githubcopilot.com` | Deneysel. GitHub cihaz akışı + `copilot_internal` değişimi (VS Code OAuth istemcisi). Aktif bir Copilot aboneliği gerektirir; resmi bir üçüncü taraf API değildir. |
 
 Google Antigravity hesap ve sağlayıcı kota sorguları, model listesine geri dönüş dahil sabit Google uç noktalarını kullanır. Bu hedefler için şeffaf Fake-IP DNS desteklenirken TLS doğrulaması, yönlendirme reddi ve özel adres kontrolleri korunur. Özel base URL yalnızca model isteklerini değiştirir; `NO_PROXY` doğrudan bağlantı politikasını korur.
@@ -220,11 +220,10 @@ varsayılan geri çekilmeden sabit bir soğuma süresi ayarlar. Açık bir
 `Retry-After` soğuma süresindeki hesaplar erken araştırılmaz; sıfırlamadan
 türetilen soğuma süreleri, sağlayıcıyı boğmadan kurtarmanın algılanabilmesi için
 tempolu bir araştırma kiralama süresi alabilir. Sıfırlamadan türetilen yerel
-model soğuma süreleri bilinen bağımsız kota gruplarını da korur:
-`gpt-5.3-codex-spark`, aynı hesabın paylaşılan GPT-5.6 Terra/Luna kotasını
-denemesini engellemezken, bu paylaşılan gruptaki modeller yine de birbirini
-korur. Açık `Retry-After` ve varsayılan soğuma süreleri her zaman hesap
-genelinde kalır.
+model soğuma süreleri, paylaşılan yerel kotayı (GPT-5.6 Terra/Luna dahil)
+`gpt-reserve` kotasından ayrı tutar. Paylaşılan gruptaki modeller birbirini
+korur; sıradan bir isteğin başarısı Reserve soğuma süresini kaldırmaz.
+Açık `Retry-After` ve varsayılan soğuma süreleri her zaman hesap genelinde kalır.
 
 **Oturum bağlılığı.** Codex iş parçacığı→hesap bağlılığı işleme özeldir
 (yalnızca bellek içindedir; proxy yeniden başlatmalarında kalıcı değildir).

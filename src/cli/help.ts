@@ -41,6 +41,7 @@ Usage:
   ocx tray <sub>              Windows status tray (install|start|stop|status|uninstall)
   ocx ensure                  Ensure the proxy is running and Codex config/cache are current
   ocx connect <url>           Connect this machine to a remote OpenCodex hub (credential via stdin)
+  ocx remote-workspace <sub>  Pair/run an OCX-only remote execution computer
   ocx disconnect              Restore local state and clear the hub connection
   ocx sync [--restart-codex]  Fetch models from providers and inject into Codex config
   ocx sync-cache [--restart-codex]
@@ -81,7 +82,7 @@ Usage:
   ocx memory [--json]         Alias of ocx observe memory
   ocx api-key <sub>           Alias of ocx access key
   ocx access <sub>            External API keys and endpoint information
-  ocx export --client <id>    Print a client config wired to the running proxy (14 clients)
+  ocx export --client <id>    Print a client config wired to the running proxy (15 clients)
   ocx integration client <sub> Enable, disable, inspect or roll back a client integration
   ocx grok <sub>              Grok Build model selection and apply
   ocx system <sub>            Runtime settings, startup, sync, OpenCodex updates, and Codex CLI inspection

@@ -77,12 +77,16 @@ type EnrichedProviderCache = Map<string, OcxProviderConfig>;
  * not a text-only model and must not be widened to image through the vision sidecar.
  */
 export function isModelVisionSidecarConsumer(
-  provider: Pick<OcxProviderConfig, "adapter" | "noVisionModels" | "modelInputModalities">,
+  provider: Pick<OcxProviderConfig, "noVisionModels" | "modelInputModalities" | "modelCapabilities">
+    & Partial<Pick<OcxProviderConfig, "adapter">>,
   modelId: string,
 ): boolean {
   // This transport accepts text only, regardless of a vendor model's native capability.
   // Keep catalog, input adaptation and describer eligibility aligned for every account/alias.
   if (provider.adapter === "zcode") return true;
+  const declared = Object.hasOwn(provider.modelCapabilities ?? {}, modelId)
+    ? provider.modelCapabilities?.[modelId]?.inputModalities : undefined;
+  if (declared !== undefined) return declared.includes("text") && !declared.includes("image");
   if (modelInList(provider.noVisionModels, modelId)) return true;
   const modalities = modelRecordValue(provider.modelInputModalities, modelId);
   return Array.isArray(modalities) && modalities.includes("text") && !modalities.includes("image");
@@ -154,10 +158,18 @@ function modelAcceptsImageInputWithCache(
   candidate: VisionCandidateModel,
   cache: EnrichedProviderCache,
 ): boolean | undefined {
-  if (isVisionSidecarConsumerWithCache(config, candidate.provider, candidate.id, cache)) return false;
   if (candidate.native === true || (candidate.provider === "openai" && SUPPORTED_NATIVE_OPENAI_SLUGS.has(candidate.id))) {
+    const nativeProvider = enrichedProviderForVision(config, candidate.provider, cache);
+    if (nativeProvider && isModelVisionSidecarConsumer({
+      noVisionModels: nativeProvider.noVisionModels, modelInputModalities: nativeProvider.modelInputModalities,
+    }, candidate.id)) return false;
     return advertisesImageInput(nativeInputModalities(candidate.id)) ?? true;
   }
+  if (isVisionSidecarConsumerWithCache(config, candidate.provider, candidate.id, cache)) return false;
+  const provider = enrichedProviderForVision(config, candidate.provider, cache);
+  const declared = Object.hasOwn(provider?.modelCapabilities ?? {}, candidate.id)
+    ? provider?.modelCapabilities?.[candidate.id]?.inputModalities : undefined;
+  if (declared !== undefined) return declared.includes("image");
   const fromRow = advertisesImageInput(candidate.inputModalities);
   if (fromRow !== undefined) return fromRow;
   return metadataImageInput(candidate.provider, candidate.id);

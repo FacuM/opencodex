@@ -24,6 +24,8 @@ import type { TranslatorBudget } from "../lib/translator-budget";
 import { rewriteRoutedCustomToolsForUpstream } from "../responses/custom-tool-compat";
 import { rewriteRoutedToolSearchForUpstream } from "../responses/tool-search-compat";
 import { rewriteRoutedNamespaceToolsForUpstream } from "../responses/namespace-tool-compat";
+import { preparePlaintextV2AgentMessages } from "../responses/plaintext-v2-agent-messages";
+import { isMetaAiResponsesDestination, rewriteMuseToolNamesForUpstream } from "../responses/muse-tool-name-alias";
 import { openaiResponsesUrl } from "./openai-responses-url";
 import { normalizeResponsesCodeMode } from "./responses-code-mode";
 import { stripUnicodePropertyPatterns } from "./responses-tool-schema";
@@ -333,24 +335,6 @@ function scrubOcxCompactionItems(
 }
 
 /**
- * Strip unsupported `reasoning` sub-parameters for native slugs that reject them (e.g. Spark).
- * codex-rs injects `reasoning.context` and `reasoning.summary` based on catalog flags; Spark's
- * backend rejects both. The catalog fix prevents `use_responses_lite` from being set, but this
- * is a defense-in-depth guard so stale on-disk catalogs don't break until the user runs `ocx sync`.
- */
-function stripUnsupportedReasoningParams(body: unknown): unknown {
-  if (!isPlainObject(body)) return body;
-  const model = typeof body.model === "string" ? body.model : "";
-  if (!model.includes("codex-spark")) return body;
-  if (!isPlainObject(body.reasoning)) return body;
-  const reasoning = body.reasoning as Record<string, unknown>;
-  // Spark supports reasoning.effort but rejects context, summary, and generate_summary.
-  const { context: _ctx, summary: _sum, generate_summary: _gs, ...rest } = reasoning;
-  if (_ctx === undefined && _sum === undefined && _gs === undefined) return body;
-  return { ...body, reasoning: Object.keys(rest).length > 0 ? rest : undefined };
-}
-
-/**
  * GPT-5.6 retired the legacy 24-hour retention field, and the ChatGPT backend 400s the whole
  * request when that field is present (issue #2092).
  *
@@ -470,156 +454,9 @@ function normalizeConfiguredReasoningSummaryDelivery(
   };
 }
 
-/**
- * Comprehensive Spark compatibility layer. codex-rs emits five tool types (function,
- * namespace, tool_search, web_search, custom) plus extensions (defer_loading,
- * parallel_tool_calls, tool_search_call/output items). Spark's serving path only
- * supports flat function tools and hosted web_search. This function:
- * - Flattens MCP-style namespace tools → promotes inner functions to top level. The reserved
- *   `functions` group is kept as a group (#3217): Codex 0.147+ sends every ordinary client tool
- *   inside it on Responses Lite, the backend accepts the group as-is, and flattening it changes
- *   what the backend answers with — a `custom_tool_call` carrying `namespace: "exec"`, which
- *   codex-rs concatenates into the unroutable `execexec`. Traced on a live proxy: with the
- *   group intact the same backend returns the bare `exec` call and the turn completes.
- * - Drops unsupported tool types (tool_search, custom)
- * - Strips defer_loading from function tools
- * - Strips namespace from input items
- * - Drops tool_search_call/tool_search_output input items
- * - Sets parallel_tool_calls to false
- */
-function stripSparkCompatibility(body: unknown): unknown {
-  if (!isPlainObject(body)) return body;
-  const model = typeof body.model === "string" ? body.model : "";
-  if (!model.includes("codex-spark")) return body;
-
-  let changed = false;
-
-  const SPARK_SAFE_TOOL_TYPES = new Set(["function", "web_search", "web_search_preview"]);
-  // Inside the reserved group Codex sends freeform `custom` tools (code-mode `exec`) and the
-  // backend accepts them there; the top-level "drop custom" rule stays for flattened groups.
-  const SPARK_SAFE_FUNCTIONS_GROUP_CHILD_TYPES = new Set(["function", "custom"]);
-  const filterSparkFunctionsGroup = (group: Record<string, unknown>): Record<string, unknown> | undefined => {
-    if (!Array.isArray(group.tools)) return undefined;
-    let groupChanged = false;
-    const children: unknown[] = [];
-    for (const child of group.tools) {
-      if (!isPlainObject(child) || typeof child.type !== "string" || !SPARK_SAFE_FUNCTIONS_GROUP_CHILD_TYPES.has(child.type)) {
-        groupChanged = true;
-        continue;
-      }
-      if (child.type === "function" && "defer_loading" in child) {
-        const { defer_loading: _, ...rest } = child;
-        groupChanged = true;
-        children.push(rest);
-        continue;
-      }
-      children.push(child);
-    }
-    if (children.length === 0) return undefined;
-    return groupChanged ? { ...group, tools: children } : group;
-  };
-
-  let tools = body.tools;
-  if (Array.isArray(tools)) {
-    const flattened: unknown[] = [];
-    for (const t of tools) {
-      if (isPlainObject(t) && t.type === "namespace" && t.name === SPARK_RESERVED_FUNCTIONS_NAMESPACE) {
-        const kept = filterSparkFunctionsGroup(t);
-        if (kept !== t) changed = true;
-        if (kept) flattened.push(kept);
-      } else if (isPlainObject(t) && t.type === "namespace") {
-        changed = true;
-        if (Array.isArray(t.tools)) {
-          for (const inner of t.tools) flattened.push(inner);
-        }
-      } else if (isPlainObject(t) && typeof t.type === "string" && !SPARK_SAFE_TOOL_TYPES.has(t.type)) {
-        changed = true;
-      } else {
-        flattened.push(t);
-      }
-    }
-    // Strip defer_loading from promoted/remaining function tools.
-    tools = flattened.map(t => {
-      if (isPlainObject(t) && t.type === "function" && "defer_loading" in t) {
-        const { defer_loading: _, ...rest } = t;
-        changed = true;
-        return rest;
-      }
-      return t;
-    });
-  }
-
-  // Clean input items: strip namespace, drop tool_search_call/tool_search_output.
-  const SPARK_UNSUPPORTED_INPUT_TYPES = new Set([
-    "tool_search_call", "tool_search_output",
-    "custom_tool_call", "custom_tool_call_output",
-  ]);
-  let input = body.input;
-  if (Array.isArray(input)) {
-    const cleaned: unknown[] = [];
-    for (const item of input) {
-      if (isPlainObject(item) && typeof item.type === "string" && SPARK_UNSUPPORTED_INPUT_TYPES.has(item.type)) {
-        changed = true;
-        continue;
-      }
-      // Process additional_tools items: filter their inner tools array the same way.
-      if (isPlainObject(item) && item.type === "additional_tools" && Array.isArray(item.tools)) {
-        const innerTools = item.tools as unknown[];
-        const filteredInner: unknown[] = [];
-        for (const t of innerTools) {
-          if (isPlainObject(t) && t.type === "namespace" && t.name === SPARK_RESERVED_FUNCTIONS_NAMESPACE) {
-            const kept = filterSparkFunctionsGroup(t);
-            if (kept !== t) changed = true;
-            if (kept) filteredInner.push(kept);
-          } else if (isPlainObject(t) && t.type === "namespace") {
-            changed = true;
-            if (Array.isArray(t.tools)) {
-              for (const fn of t.tools) filteredInner.push(fn);
-            }
-          } else if (isPlainObject(t) && typeof t.type === "string" && !SPARK_SAFE_TOOL_TYPES.has(t.type)) {
-            changed = true; // drop custom, tool_search, etc.
-          } else {
-            filteredInner.push(t);
-          }
-        }
-        // Strip defer_loading from remaining function tools.
-        const cleanedInner = filteredInner.map(t => {
-          if (isPlainObject(t) && t.type === "function" && "defer_loading" in t) {
-            const { defer_loading: _, ...rest } = t;
-            changed = true;
-            return rest;
-          }
-          return t;
-        });
-        cleaned.push({ ...item, tools: cleanedInner });
-        continue;
-      }
-      if (isPlainObject(item) && "namespace" in item) {
-        const { namespace: _, ...rest } = item;
-        changed = true;
-        cleaned.push(rest);
-      } else {
-        cleaned.push(item);
-      }
-    }
-    if (changed) input = cleaned;
-  }
-
-  // Force parallel_tool_calls off for Spark.
-  const extraOverrides: Record<string, unknown> = {};
-  if (body.parallel_tool_calls === true) { extraOverrides.parallel_tool_calls = false; changed = true; }
-
-  return changed
-    ? { ...body, ...(tools !== body.tools ? { tools } : {}), ...(input !== body.input ? { input } : {}), ...extraOverrides }
-    : body;
-}
-
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
-
-/** Codex's reserved client-tool group on Responses Lite; carries no wire prefix. */
-const SPARK_RESERVED_FUNCTIONS_NAMESPACE = "functions";
 
 /**
  * Apply the routed provider's real effort ladder to an existing Responses reasoning field.
@@ -865,6 +702,7 @@ function promoteClientLoadedTools(body: unknown): unknown {
 }
 
 const MAX_RESPONSES_CALL_ID_LENGTH = 64;
+
 const REPAIRED_CALL_ID_PREFIX = "call_ocx_";
 const REPAIRED_CALL_ID_DIGEST_LENGTH = MAX_RESPONSES_CALL_ID_LENGTH - REPAIRED_CALL_ID_PREFIX.length;
 
@@ -2370,6 +2208,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       let routedCustomToolRepairNames: Set<string> | undefined;
       let convertedRoutedToolSearchNames: Set<string> | undefined;
       let convertedRoutedNamespaceToolAliases: Map<string, { namespace: string; name: string; kind: "function" | "custom" }> | undefined;
+      let plaintextV2AgentMessageToolNames: ReadonlySet<string> | undefined;
+      let plaintextV2AgentMessageAliasedToolNames: ReadonlySet<string> | undefined;
+      let convertedMuseToolNameAliases: Map<string, string> | undefined;
       const unexpandedMiss = !!parsed.previousResponseId && parsed._previousResponseInputExpanded !== true;
       let outBody = stripPreviousResponseId(
         parsed._rawBody,
@@ -2463,6 +2304,14 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
           outBody = stripOpenAiOnlyWebSearchFields(outBody);
         }
         outBody = stripMuseSparkUnsupportedWebSearchFields(outBody, parsed.modelId, url);
+        // Host-only: api.meta.ai rejects function names over 64 chars on every Muse model,
+        // including default muse-spark-1.3. Do not reuse the contributor/Zen web_search
+        // predicates. Namespace flattening has already produced the public wire names.
+        if (isMetaAiResponsesDestination(url)) {
+          const rewritten = rewriteMuseToolNamesForUpstream(outBody);
+          outBody = rewritten.body;
+          convertedMuseToolNameAliases = rewritten.aliases;
+        }
         // Last, so promoted namespace children are also cleared of Codex-private fields.
         outBody = stripCanonicalOnlyToolFields(outBody, provider.supportsOpenAiWebSearchToolFields === false);
       }
@@ -2479,34 +2328,38 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // Run after routed compaction so nested input_image parts are replaced before a malformed
       // tool output is flattened to text and can no longer be inspected structurally.
       outBody = repairUnidentifiedToolOutputItems(outBody);
+      if (parsed._plaintextV2AgentMessages === true && isCanonicalOpenAiForwardProvider(provider)) {
+        const prepared = preparePlaintextV2AgentMessages(outBody);
+        outBody = prepared.body;
+        if (prepared.namespaceAliased) {
+          plaintextV2AgentMessageToolNames = prepared.toolNames;
+          plaintextV2AgentMessageAliasedToolNames = prepared.aliasedAgentMessageToolNames;
+        }
+      }
       const threadServingIdentityChanged = parsed._stripReasoningEncryptedContent === true;
       const sanitizedBody = normalizeToolSchemas(
-        stripSparkCompatibility(
-          stripUnsupportedReasoningParams(
-            stripItemIdsWhenUnstored(
-              stripInvalidItemIds(
-                stripUnsupportedHostedTools(
-                  sanitizeReasoningInputContent(
-                    scrubOcxCompactionItems(
-                      outBody,
-                      destinationDecodesNativeCompactionBlob(provider),
-                      threadServingIdentityChanged,
-                    ),
-                    {
-                      preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
-                      dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
-                      stripEncryptedContent: threadServingIdentityChanged,
-                    },
-                  ),
-                  provider,
+        stripItemIdsWhenUnstored(
+          stripInvalidItemIds(
+            stripUnsupportedHostedTools(
+              sanitizeReasoningInputContent(
+                scrubOcxCompactionItems(
+                  outBody,
+                  destinationDecodesNativeCompactionBlob(provider),
+                  threadServingIdentityChanged,
                 ),
+                {
+                  preserveRawReasoningContent: provider.preserveResponsesReasoningContent === true,
+                  dropNullContentChannel: !isOpenAiOperatedResponsesDestination(provider),
+                  stripEncryptedContent: threadServingIdentityChanged,
+                },
               ),
+              provider,
             ),
           ),
         ),
         isXaiSchemaTarget(provider),
       );
-      const finalBody = stripDisabledVerbosity(
+      const unnormalizedBody = stripDisabledVerbosity(
         stripDisabledReasoningSummaries(
           normalizeConfiguredReasoningSummaryDelivery(sanitizedBody, provider, parsed.modelId),
           provider,
@@ -2515,14 +2368,16 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         provider,
         parsed.modelId,
       );
+      // Normalize the wire model before deriving model-dependent transport metadata.
+      const finalBody =
+        provider.modelSuffixBracketStrip
+          && unnormalizedBody !== null
+          && typeof unnormalizedBody === "object"
+          && !Array.isArray(unnormalizedBody)
+          && typeof (unnormalizedBody as { model?: unknown }).model === "string"
+          ? { ...(unnormalizedBody as Record<string, unknown>), model: stripBracketedModelSuffix((unnormalizedBody as { model: string }).model) }
+          : unnormalizedBody;
       if (isCanonicalOpenAiForwardProvider(provider)) {
-        // Spark closes Responses Lite streams before a terminal completion. Select compatibility
-        // from the final wire model so aliases cannot leave the caller or a static header enabled.
-        if (isPlainObject(finalBody) && finalBody.model === "gpt-5.3-codex-spark") {
-          for (const name of Object.keys(headers)) {
-            if (name.toLowerCase() === CODEX_RESPONSES_LITE_HEADER) delete headers[name];
-          }
-        }
         const routingHeaders = new Headers(headers);
         applyCodexRoutingHint(routingHeaders, finalBody);
         // Static headers may use mixed casing. Remove every stale spelling
@@ -2548,15 +2403,7 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
       // here, on the serialized body, not on the parsed selector. One place covers both the
       // HTTP and the WebSocket outbound, because the WS path transports this same request
       // instead of rebuilding it.
-      const body = JSON.stringify(
-        provider.modelSuffixBracketStrip
-          && finalBody !== null
-          && typeof finalBody === "object"
-          && !Array.isArray(finalBody)
-          && typeof (finalBody as { model?: unknown }).model === "string"
-          ? { ...(finalBody as Record<string, unknown>), model: stripBracketedModelSuffix((finalBody as { model: string }).model) }
-          : finalBody,
-      );
+      const body = JSON.stringify(finalBody);
       const releaseBodyObservation = translatorBudget.observeExternallyCapped(
         "passthrough_serialization",
         new TextEncoder().encode(body).byteLength,
@@ -2571,6 +2418,9 @@ export function createResponsesPassthroughAdapter(provider: OcxProviderConfig): 
         ...(routedCustomToolRepairNames ? { routedCustomToolRepairNames } : {}),
         ...(convertedRoutedToolSearchNames ? { convertedRoutedToolSearchNames } : {}),
         ...(convertedRoutedNamespaceToolAliases ? { convertedRoutedNamespaceToolAliases } : {}),
+        ...(plaintextV2AgentMessageToolNames ? { plaintextV2AgentMessageToolNames } : {}),
+        ...(plaintextV2AgentMessageAliasedToolNames ? { plaintextV2AgentMessageAliasedToolNames } : {}),
+        ...(convertedMuseToolNameAliases ? { convertedMuseToolNameAliases } : {}),
         ...(tierLog ? { tierLog } : {}),
       };
     },

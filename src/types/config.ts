@@ -6,6 +6,12 @@ import type { CodexAccount } from "./accounts";
  * /v1/messages surface, the `ocx claude` launcher, and the GUI Claude page.
  */
 export interface OcxClaudeCodeConfig {
+  /**
+   * Opt-in relocation of supported trailing Claude harness notices from system instructions
+   * to a user input message on translated routes. Changes the Desktop cache-key prefix.
+   * Default: false; only literal true enables it. Native passthrough is unchanged.
+   */
+  stabilizePromptCache?: boolean;
   /** Opt-in translated Messages admission; unset keeps legacy behavior. Native passthrough is exempt. */
   compatibility?: "shadow" | "enforce";
   /** Kill switch for the /v1/messages inbound (GUI "Claude ON" toggle). Default: enabled. */
@@ -374,6 +380,8 @@ export interface OcxConfig {
   privacy?: OcxPrivacyConfig;
   /** Opt in to one identical-turn retry when a Responses completion has no text or tool call. */
   emptyCompletionRetry?: boolean;
+  /** Suppress allowlisted client-facing Codex transport hints; provider enforcement is unchanged. */
+  dropCodexSafetyBuffering?: boolean;
   /**
    * Whether a login may open a browser on the machine running the proxy.
    *
@@ -601,7 +609,9 @@ export interface OcxConfig {
   /**
   * Shadow call intercept: redirect Codex's hard-coded helper calls (title generation,
   * commit messages, skill orchestration) to a user-chosen model. Default intercepted
-  * source models: gpt-5.4-mini (older clients) and gpt-5.6-luna (Codex 0.145.0+).
+  * source model: gpt-5.6-luna (Codex 0.145.0+). Clients through 0.144.x emitted
+  * gpt-5.4-mini instead; that model is retired upstream, but it stays available as an
+  * opt-in `sourceModels` prefix so an old client's helper calls can still be intercepted.
   * Opt-in; disabled by default. Matching requests preserve their configured reasoning effort.
   * All requests for configured shadow source models are intercepted regardless of request kind,
   * except when the replacement intersects the same provider+model source set.
@@ -611,7 +621,7 @@ export interface OcxConfig {
    enabled?: boolean;
    /** Replacement model id (e.g. "gpt-5.5"). */
    model?: string;
-   /** Optional override of intercepted source-model prefixes (default: gpt-5.4-mini, gpt-5.6-luna). */
+   /** Optional override of intercepted source-model prefixes (default: gpt-5.6-luna). */
    sourceModels?: string[];
  };
   /**
@@ -634,6 +644,8 @@ export interface OcxConfig {
    * Routed parents get v2 tools; Sol/Terra can still spawn Grok/Claude (issue #92).
    */
   keepNativeChatGptOnV1?: boolean;
+  /** Experimental plaintext delivery for native v2 collaboration messages; disabled unless true. */
+  plaintextV2AgentMessages?: boolean;
   /** Experimental, default-off ChatGPT recovery for encrypted V2 routed tasks. */
   agentTaskRecovery?: {
     enabled?: boolean;
@@ -815,15 +827,6 @@ export interface OcxConfig {
    */
   codexAccountPickerEnabled?: boolean;
   /**
-   * Show the GPT-5.3-Codex-Spark 5-hour and weekly windows on Codex quota surfaces. Default false.
-   *
-   * Spark is a single-model window that reads 0% for most operators, and on a multi-account
-   * pool it doubles the bar count for information almost nobody acts on. Hidden by default and
-   * revealed by an explicit `true`; a malformed value reads as hidden rather than rejecting the
-   * whole config.
-   */
-  showCodexSparkQuota?: boolean;
-  /**
    * Opt-in auto-redemption of a main-account Codex reset credit shortly before it expires
    * (#822). Default off. `leadTimeMinutes` (1–60, default 10) is how long before
    * `expires_at` the redeem is attempted; the credit list is re-read upstream right before
@@ -858,7 +861,7 @@ export interface OcxConfig {
   /** Auto-switch threshold (0-100). Default 80. 0 = disabled. */
   autoSwitchThreshold?: number;
   /** New-session account rotation strategy for the Codex pool. Default quota (today's behaviour). */
-  accountPoolStrategy?: OcxAccountPoolRotationStrategy;
+  accountPoolStrategy?: OcxAccountPoolRotationStrategy | "reset-first";
   /** Successful new-session binds retained on one round-robin selection. Default 1; range 1..100. */
   accountPoolStickyLimit?: number;
   /** Consecutive non-2xx upstream responses before switching future new threads. Default 3. 0 = disabled. */
@@ -959,8 +962,9 @@ export type OcxComboDefaultEffort = "low" | "medium" | "high" | "xhigh" | "max" 
  * advertises no effort control (`reasoningEfforts: []`) empties the combo's picker.
  * `adaptive` excludes those empty ladders from the published intersection, keeping the
  * control usable for a mixed-capability group. Unknown (`undefined`) ladders stay
- * wildcards in both modes. Dispatch is unchanged: each concrete target still resolves
- * its own effort at request time.
+ * wildcards in both modes. An explicit empty ladder removes unsupported effort controls
+ * in either mode; adaptive dispatch also removes them before sending to an unknown target,
+ * while each known target still resolves its own effort.
  */
 export type OcxComboReasoningEffortMode = "strict" | "adaptive";
 
@@ -1122,7 +1126,7 @@ export interface OcxTokenGuardianConfig {
   codexWarmupEnabled?: boolean;
   /** Max age before a Codex pool account is revalidated via `/codex/responses`. Default 691200 (8d). */
   codexWarmupMaxAgeSeconds?: number;
-  /** Model used for optional Codex pool warmup. Default gpt-5.4-mini. */
+  /** Model used for optional Codex pool warmup. Default gpt-5.6-luna. */
   codexWarmupModel?: string;
 }
 

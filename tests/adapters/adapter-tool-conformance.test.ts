@@ -425,7 +425,9 @@ describe("registry-derived routed tool conformance", () => {
   // Both Devin providers are runTurn-only: devin-cli drives a local CLI over ACP
   // stdio and devin streams Connect-RPC from runTurn, so for both of them
   // buildRequest returns a placeholder and tools never travel the wire path.
-  const RUN_TURN_ONLY_WIRES = new Set(["devin-cli", "devin"]);
+  // Both Devin provider rows share it and differ only in where the credential
+  // came from.
+  const RUN_TURN_ONLY_WIRES = new Set(["devin"]);
 
   test("every registered adapter keeps the nested apply_patch helper in its final request", async () => {
     for (const [adapterId] of adapterDefinitions()) {

@@ -5,6 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { desktopStatus, disconnectDesktop, loadDesktopSettings, resolveDesktopRuntime, validateDesktopWorkspace } from "../../src/adapters/zcode/desktop";
 import { readZcodeModels } from "../../src/adapters/zcode/settings";
+import { repoRoot } from "../helpers/repo-root";
 
 import { parseNativeOAuthEvent, nativeOAuthCommand } from "../../src/adapters/zcode/native-oauth";
 import { resolveDesktopNode } from "../../src/adapters/zcode/desktop-node";
@@ -296,13 +297,14 @@ test("ZCode catalog advertises sidecar-backed attachments for legacy and account
 });
 
 test("ZCode GLM-5.3 catalog exposes only real levels plus Codex ultra", async () => {
-  const { gatherRoutedModels } = await import("../../src/codex/catalog/provider-fetch");
-  const { buildCatalogEntries } = await import("../../src/codex/catalog/sync");
-  process.env.OCX_ZCODE_SANDBOX = "0";
   const runtimeRoot = join(root, "app"), runtime = join(runtimeRoot, "resources/glm/zcode.cjs");
   mkdirSync(join(runtimeRoot, "resources/glm"), { recursive: true });
   writeFileSync(join(runtimeRoot, "resources/app.asar"), "fixture"); writeFileSync(runtime, "");
-  const workspace = join(root, "workspace"), connectionDir = join(process.env.OPENCODEX_HOME!, "zcode-desktop");
+  const opencodexHome = join(root, "proxy");
+  const desktopHome = join(root, "desktop-home");
+  mkdirSync(join(desktopHome, ".zcode/v2"), { recursive: true });
+  writeFileSync(join(desktopHome, ".zcode/v2/config.json"), "{}");
+  const workspace = join(root, "workspace"), connectionDir = join(opencodexHome, "zcode-desktop");
   mkdirSync(workspace); mkdirSync(connectionDir, { recursive: true });
   const ids = ["builtin:zai-coding-plan/GLM-5.3", "builtin:zai-coding-plan/GLM-5.3-Flash"];
   writeFileSync(join(connectionDir, "connection.json"), JSON.stringify({
@@ -310,13 +312,40 @@ test("ZCode GLM-5.3 catalog exposes only real levels plus Codex ultra", async ()
     models: ids.map(id => ({ id, providerId: "builtin:zai-coding-plan", modelId: id.split("/")[1], label: id })),
   }), { mode: 0o600 });
   const providerName = `zcode-fixture-${crypto.randomUUID()}`;
-  const models = await gatherRoutedModels({ port: 0, defaultProvider: providerName, providers: {
-    [providerName]: { adapter: "zcode", authMode: "local", baseUrl: "https://zcode.z.ai", liveModels: true,
-      contextWindow: 8192 },
-  } });
+  // Catalog discovery reads process-global managed Desktop state. Keep this assertion in a child
+  // so unrelated parallel files that exercise a different OPENCODEX_HOME cannot replace its input.
+  const script = `
+    const { gatherRoutedModels } = await import("./src/codex/catalog/provider-fetch.ts");
+    const providerName = ${JSON.stringify(providerName)};
+    const models = await gatherRoutedModels({ port: 0, defaultProvider: providerName, providers: {
+      [providerName]: { adapter: "zcode", authMode: "local", baseUrl: "https://zcode.z.ai",
+        liveModels: true, contextWindow: 8192 },
+    } });
+    console.log(JSON.stringify(models));
+  `;
+  const child = Bun.spawnSync([process.execPath, "-e", script], {
+    cwd: repoRoot(),
+    env: {
+      ...process.env,
+      HOME: desktopHome,
+      OPENCODEX_HOME: opencodexHome,
+      OCX_ZCODE_SANDBOX: "0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(child.exitCode, child.stderr.toString()).toBe(0);
+  const models = JSON.parse(child.stdout.toString()) as Array<{
+    provider: string;
+    id: string;
+    contextWindow?: number;
+    inputModalities?: string[];
+    reasoningEfforts?: string[];
+  }>;
+  const { buildCatalogEntries } = await import("../../src/codex/catalog/sync");
   for (const modelId of ids) {
     const model = models.find(row => row.provider === providerName && row.id === modelId);
-    expect(model?.contextWindow).toBe(8192);
+    expect(model?.contextWindow, JSON.stringify(models)).toBe(8192);
     expect(model?.inputModalities).toContain("image");
     expect(model?.reasoningEfforts).toEqual(["low", "high", "max"]);
     const [entry] = buildCatalogEntries(null, [], [model!]);

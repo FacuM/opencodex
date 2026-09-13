@@ -227,6 +227,14 @@ export type TierDecision =
  * One configured provider entry. `authMode` (default `"key"`) decides whether same-target 429
  * retries are allowed; OAuth/forward credentials and local runtimes are never replayed.
  */
+/** Explicit per-model operator declarations; absent axes keep legacy behavior. */
+export interface ModelCapabilities {
+  inputModalities?: Array<"text" | "image" | "audio" | "video">;
+  /** Requested tier only; does not imply an upstream window or activate an unverified wire. */
+  contextTier?: "default" | "long_context";
+  video?: { processing?: "static" | "agentic" };
+}
+
 export interface OcxProviderConfig {
   /** Explicit manual ZCode account binding; never participates in an implicit pool. */
   zcodeAccountId?: string;
@@ -294,8 +302,8 @@ export interface OcxProviderConfig {
   /**
    * Responses upstream that stores nothing server-side (DeepSeek documents "the API
    * is stateless"). Stateful request parameters are dropped, `store` is pinned false,
-   * and orphaned tool results left by a replay miss are repaired rather than
-   * forwarded to an upstream that cannot resolve their pair.
+   * and missing local continuation history returns previous_response_not_found so
+   * clients can resend full input. Explicit input still receives orphan-item repair.
    */
   statelessResponses?: boolean;
   /**
@@ -480,6 +488,7 @@ export interface OcxProviderConfig {
   modelContextWindows?: Record<string, number>;
   /** Model-specific Codex catalog input modalities, e.g. ["text"] or ["text", "image"]. */
   modelInputModalities?: Record<string, string[]>;
+  modelCapabilities?: Record<string, ModelCapabilities>;
   /** Model-specific max input token limits. Values cap auto_compact_token_limit. */
   modelMaxInputTokens?: Record<string, number>;
   /**
@@ -503,6 +512,28 @@ export interface OcxProviderConfig {
    * all-zero entry means "not billable here" and falls through to the catalogs.
    */
   modelCosts?: Record<string, ProviderCostOverlay>;
+  /**
+   * Provider-wide auto-review (approval) model for routed models of this provider.
+   *
+   * The value is a catalog selector: either a bare model id of this provider
+   * (for example `deepseek-v4-flash`) or a full public slug (for example
+   * `opencode-go/deepseek-v4-flash`). During catalog synchronization the
+   * selector is resolved against the final catalog and stamped as
+   * `auto_review_model_override` on each routed row of this provider that has
+   * no per-model override. The root Codex `auto_review_model` remains the
+   * fallback for every row without a provider stamp. Null or blank clears the
+   * provider-wide stamp; see `autoReviewModelOverrides` for per-model targets.
+   */
+  autoReviewModel?: string;
+  /**
+   * Per-model auto-review (approval) overrides for routed models of this
+   * provider. Keys are exact upstream model ids under this provider (either
+   * spelling of a slash-containing id is accepted). Each value is a catalog
+   * selector with the same meaning as `autoReviewModel`; an entry wins over
+   * the provider-wide value for its model. Null or blank entries remove the
+   * model from the map while preserving other entries.
+   */
+  autoReviewModelOverrides?: Record<string, string>;
   headers?: Record<string, string>;
   /** Default provider-routing preferences for models sent through the canonical OpenRouter API. */
   openRouterRouting?: OpenRouterProviderRouting;
@@ -622,6 +653,12 @@ export interface OcxProviderConfig {
   xaiResponsesXSearch?: boolean;
   /** One-time Grok subscription wire upgrade; later explicit Chat choices remain authoritative. */
   xaiResponsesDefaultVersion?: number;
+  /**
+   * One-time Z.AI coding-plan wire upgrade. The router already canonicalizes the `zai` row onto the
+   * Responses destination at request time; the marker records that the saved row was rewritten to
+   * match, so a later explicit Chat choice is not re-migrated on the next boot.
+   */
+  zaiResponsesDefaultVersion?: number;
   /**
    * Whether the Responses upstream accepts native custom tools and custom_tool_call items.
    * Set false only for a provider whose native contract rejects them; absence preserves
@@ -769,6 +806,12 @@ export interface OcxProviderConfig {
    * out explicitly (e.g. MiniMax, where low effort disables thinking).
    */
   requiresReasoningPlaceholderModels?: string[];
+  /**
+   * Default to displaying provider-authored summaries when Responses summary is omitted.
+   * Explicit wire summary:"none" wins; false disables a seeded provider default.
+   * Raw reasoning is never relabeled as a summary.
+   */
+  showThinkingSummary?: boolean;
   /**
    * Opt-in same-target 429 retry policy. Codex itself never retries 429 (it retries 5xx only,
    * openai/codex#30471), and single-key pools have no failover, so the proxy waits and replays

@@ -86,6 +86,14 @@ GUI-сессия в стиле loopback не выпускается.
 | `GET /api/claude-desktop/status` | Проверить согласованность saved-vs-applied profile и здоровье Desktop | 400 status read failure |
 | `GET, PUT /api/claude-code` | Прочитать или обновить настройки gateway, auth-mode, model-map, context, agent и sidecar для Claude Code | 400 invalid field or shape |
 
+Дашборд управляет обоими путями купонов из **Providers > xAI Grok > Accounts**: каждая
+строка вошедшего аккаунта несёт значок-билет с числом оставшихся купонов, а значок
+открывает диалог, который показывает окна действия и обменивает купон, ближайший
+к истечению срока. Диалог отправляет сгенерированный клиентом `operationId` и после
+таймаута прекращает отправку вместо повторной попытки, потому что обмен, запись
+журнала которого ещё открыта, выполнился бы снова. `ocx account grok-reset-coupons`
+остаётся эквивалентом в терминале.
+
 О принципах model roster и поведении encrypted worker-task см.
 [Поверхность подагентов](/guides/sub-agent-surface/).
 
@@ -147,6 +155,8 @@ GUI-сессия в стиле loopback не выпускается.
 | `GET, PUT /api/storage/cleanup-policy` | Прочитать или обновить расписанную cleanup-policy и job-state | 400 invalid policy |
 | `POST /api/storage/cleanup-policy/run` | Запустить manual cleanup-policy run | 409 `already_running`; 500 `cleanup_failed` |
 | `GET /api/storage/cleanup-policy/test-stream` | Тестовый policy-stream hook | 404 `not_found`, когда недоступен |
+
+Если строка превышает существующий лимит размера парсера, `GET /api/usage` и `GET /api/keys` сохраняют агрегаты читаемых строк и добавляют в ответ `usageIncomplete: true` и `usageIncompleteReason: "oversized_rows"`. Диагностика сохраняется в кеше и при инкрементальных добавлениях, в том числе для пустых результатов и отсутствующих совпадений; при перестроении она вычисляется заново. Идентификаторы провайдеров, моделей и API-ключей не сокращаются. Отсутствие флага не доказывает корректность всех строк. Это отдельный сигнал от `historyTruncated`, `entriesTruncated` и покрытия измерений токенов.
 
 Строки в `models`, `providers` и `days[].models` также содержат `cacheHitRate` — долю входных
 токенов, полученных из кэша промптов провайдера и ограниченную диапазоном `[0, 1]`. Значение равно

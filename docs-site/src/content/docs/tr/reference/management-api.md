@@ -90,6 +90,15 @@ hatalar" sütunu bu tabloyu tekrarlamak yerine rotaya özgü ek sonuçları list
 | `GET /api/claude-desktop/status` | Kaydedilen ve uygulanan profili ve Desktop sağlığını inceleyin | 400 durum okuma hatası |
 | `GET, PUT /api/claude-code` | Claude Code ağ geçidi, kimlik doğrulama modu, model haritası, bağlam, ajan ve sidecar ayarlarını okuyun veya güncelleyin | 400 geçersiz alan veya şekil |
 
+Kontrol paneli her iki kupon yolunu da **Providers > xAI Grok > Accounts**
+üzerinden yürütür: oturum açmış her hesap satırı, kalan kupon sayısını gösteren
+bir bilet rozeti taşır ve rozet, geçerlilik pencerelerini listeleyen ve süresi
+dolmaya en yakın kuponu kullanan bir iletişim kutusu açar. İletişim kutusu
+istemci tarafından üretilen bir `operationId` gönderir ve yeniden denemek yerine
+zaman aşımından sonra göndermeyi durdurur; çünkü günlük kaydı hâlâ açık olan
+bir kullanım yeniden yürütülür. `ocx account grok-reset-coupons` uçbirim
+eşdeğeri olarak kalır.
+
 Model kadrosunun ve şifrelenmiş çalışan görevi davranışının arkasındaki
 kavramlar için [Alt Ajan Arayüzü](/tr/guides/sub-agent-surface/) sayfasına
 bakın.
@@ -153,6 +162,8 @@ Hedef stratejileri, soğuma süreleri, takma adlar ve yönlendirme hataları iç
 | `GET, PUT /api/storage/cleanup-policy` | Zamanlanmış temizleme politikasını ve iş durumunu okuyun veya güncelleyin | 400 geçersiz politika |
 | `POST /api/storage/cleanup-policy/run` | Manuel bir temizleme politikası çalıştırması başlatın | 409 `already_running`; 500 `cleanup_failed` |
 | `GET /api/storage/cleanup-policy/test-stream` | Yalnızca test amaçlı politika akış kancası | Kullanılamadığında 404 `not_found` |
+
+Bir satır mevcut ayrıştırıcı boyut sınırını aşarsa `GET /api/usage` ve `GET /api/keys` okunabilir satır toplamlarını korur ve yanıt düzeyinde `usageIncomplete: true` ile `usageIncompleteReason: "oversized_rows"` ekler. Bu tanı, boş veya eşleşmeyen sonuçlar dahil önbellekte ve artımlı eklemelerde korunur; yeniden oluşturma sırasında tekrar hesaplanır. Sağlayıcı, model ve API anahtarı kimlikleri kısaltılmaz. Bayrağın bulunmaması tüm kayıtların geçerli olduğunu kanıtlamaz. Bu bilgi `historyTruncated`, `entriesTruncated` ve token ölçüm kapsamından ayrıdır.
 
 `GET /api/usage?range=30d&surface=codex` için `accounts`, gözlemlenen her Codex
 havuz etiketi için bir satır içerir. Her satır `accountLogLabel`, belirteç

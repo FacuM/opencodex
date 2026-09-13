@@ -127,7 +127,7 @@ ocx logout <provider>
 | `google-antigravity` | `google` | `https://daily-cloudcode-pa.googleapis.com` | Google OAuth avec le protocole Cloud Code Assist. La découverte en direct utilise le point de terminaison CCA authentifié `v1internal:fetchAvailableModels` et publie les modèles d'agent accessibles au compte connecté ; le catalogue maintenu reste la solution de repli. |
 | `cursor` | `cursor` | `https://api2.cursor.sh` | Connexion PKCE expérimentale, transport HTTP/2 en direct et découverte de modèles filtrés par compte. |
 | `devin` | `devin` | `https://server.codeium.com` | Passerelle Cognition/Devin non officielle et expérimentale. La connexion ouvre l'authentification Auth0 dans le navigateur, puis échange le jeton via `RegisterUser` contre une clé d'API durable. Les modèles sont découverts par compte avec `GetCascadeModelConfigs` ; le streaming passe uniquement par `runTurn` sur Connect-RPC. Absente du préréglage du tableau de bord par défaut. |
-| `devin-cli` | `devin-cli` | `https://cli.devin.ai` | Pilote la CLI Devin installée localement via l'Agent Client Protocol (`devin acp`, JSON-RPC sur stdio). La CLI détient ses propres identifiants issus de `devin auth login`, donc opencodex ne stocke aucune clé. `OPENCODEX_DEVIN_CLI_BIN` désigne l'exécutable ; pour autoriser la CLI à lire et écrire des fichiers, il faut définir explicitement `OPENCODEX_DEVIN_CLI_ALLOW_TOOLS=1`, le refus étant la valeur par défaut. |
+| `devin-cli` | `devin` | `https://server.codeium.com` | Importe l'identifiant que votre Devin CLI installé détient déjà (`devin auth login` l'écrit dans son propre `credentials.toml`), puis diffuse via l'api-server Connect-RPC de Cognition comme le fournisseur `devin` — sans connexion navigateur ni clé à coller. La liste des modèles et les fenêtres de contexte proviennent du catalogue de votre compte. |
 | `github-copilot` | `openai-chat` | `https://api.githubcopilot.com` | Expérimental. Flux d'appareil GitHub et échange `copilot_internal` (client OAuth de VS Code). Nécessite un abonnement Copilot actif ; il ne s'agit pas d'une API tierce officielle. |
 
 Les vérifications de quota Google Antigravity utilisent des points de terminaison Google fixes, y compris le repli vers la liste des modèles. Elles prennent en charge le DNS Fake-IP transparent pour ces destinations en conservant la vérification TLS, le refus des redirections et les contrôles des adresses privées. Une URL de base personnalisée ne modifie que les requêtes de modèles ; `NO_PROXY` conserve la politique de connexion directe.
@@ -196,9 +196,9 @@ de récupération strict, déterminé par `Retry-After`, par les en-têtes `rese
 plafond prévu — ou par un bref délai de repli par défaut. Les comptes soumis à un délai `Retry-After` explicite
 ne sont pas sondés avant son expiration. Les délais calculés à partir des informations de réinitialisation
 peuvent bénéficier d'une autorisation de sondage cadencée, afin de détecter la reprise sans submerger le
-fournisseur. Pour les modèles natifs, ces délais préservent également les groupes de quotas indépendants connus :
-`gpt-5.3-codex-spark` n'empêche pas le même compte d'essayer le quota partagé de GPT-5.6 Terra/Luna, tandis
-que les modèles de ce groupe partagé continuent de se protéger mutuellement. Les délais `Retry-After` explicites
+fournisseur. Pour les modèles natifs, ces délais séparent le quota partagé (dont GPT-5.6 Terra/Luna)
+de `gpt-reserve`. Les modèles du groupe partagé continuent de se protéger mutuellement ;
+une requête ordinaire réussie ne lève pas le délai de Reserve. Les délais `Retry-After` explicites
 et les délais par défaut s'appliquent toujours à l'ensemble du compte.
 
 **Affinité de session.** L'affinité entre le fil Codex et le compte est locale au processus — uniquement en mémoire et

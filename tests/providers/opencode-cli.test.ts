@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import * as directHttp from "../../src/server/direct-local-http";
 import * as childProcess from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -127,9 +128,9 @@ describe("ocx opencode provider block", () => {
   });
 
   test("native slugs pick up authoritative context windows from the resolver", () => {
-    const block = buildOpencodeProviderBlock(10100, ["gpt-5.4", "unknown-native"], [], slug =>
-      slug === "gpt-5.4" ? 1_000_000 : undefined);
-    expect(block.models["gpt-5.4"]?.limit).toEqual({ context: 1_000_000, output: SCHEMA_REQUIRED_OUTPUT_BUDGET });
+    const block = buildOpencodeProviderBlock(10100, ["gpt-5.6-luna", "unknown-native"], [], slug =>
+      slug === "gpt-5.6-luna" ? 1_000_000 : undefined);
+    expect(block.models["gpt-5.6-luna"]?.limit).toEqual({ context: 1_000_000, output: SCHEMA_REQUIRED_OUTPUT_BUDGET });
     expect(block.models["unknown-native"]?.limit).toBeUndefined();
   });
 
@@ -241,7 +242,7 @@ describe("ocx opencode proxy model catalog", () => {
 
   test("the first launcher reads selection persisted during /api/models before building both provider blocks", async () => {
     const home = mkdtempSync(join(tmpdir(), "ocx-opencode-discovery-selection-"));
-    const envKeys = ["OPENCODEX_HOME", "CODEX_HOME", "XDG_CONFIG_HOME", OPENCODE_CONFIG_CONTENT_ENV];
+    const envKeys = ["OPENCODEX_HOME", "CODEX_HOME", "XDG_CONFIG_HOME", "OPENCODEX_ADMIN_AUTH_TOKEN", OPENCODE_CONFIG_CONTENT_ENV];
     const previous = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
     const configPath = join(home, "config.json");
     const pending = cfg({
@@ -261,7 +262,8 @@ describe("ocx opencode proxy model catalog", () => {
     const finder = spyOn(liveness, "findLiveProxy").mockResolvedValue({
       port: 10123, hostname: "127.0.0.1", pid: null, source: "config",
     });
-    const fetcher = spyOn(globalThis, "fetch").mockImplementation(async input => {
+    const fetcher = spyOn(directHttp, "directLocalHttpFetch").mockImplementation(async (input, init) => {
+      expect(new Headers(init?.headers).get("x-opencodex-api-key")).toBe("fixture-admin-token");
       expect(String(input)).toBe("http://127.0.0.1:10123/api/models");
       expect(JSON.parse(readFileSync(configPath, "utf8")).providers.pending.initialModelSelection.status).toBe("pending");
       writeFileSync(configPath, JSON.stringify(ready));
@@ -279,6 +281,7 @@ describe("ocx opencode proxy model catalog", () => {
     const stderr = spyOn(console, "error").mockImplementation(() => {});
     try {
       process.env.OPENCODEX_HOME = home;
+      process.env.OPENCODEX_ADMIN_AUTH_TOKEN = "fixture-admin-token";
       process.env.CODEX_HOME = join(home, "codex");
       process.env.XDG_CONFIG_HOME = join(home, "xdg");
       delete process.env[OPENCODE_CONFIG_CONTENT_ENV];

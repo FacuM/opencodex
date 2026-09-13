@@ -222,7 +222,7 @@ describe("vision eligibility core", () => {
   test("14. a non-native row's explicit text-only modality wins over a colliding native slug", () => {
     expect(modelAcceptsImageInput(emptyConfig, {
       provider: "custom-openai-compatible",
-      id: "gpt-5.4-mini",
+      id: "gpt-5.6-luna",
       inputModalities: ["text"],
     })).toBe(false);
   });
@@ -294,7 +294,29 @@ describe("vision eligibility core", () => {
   });
 });
 
+
+test("explicit routed image declarations outrank stale candidate metadata", () => {
+  const config = configWithProviders({ custom: {
+    adapter: "openai-chat", baseUrl: "https://example.test/v1", noVisionModels: ["ModelA"],
+    modelCapabilities: { ModelA: { inputModalities: ["text", "image"] } },
+  } });
+  expect(modelAcceptsImageInput(config, { provider: "custom", id: "ModelA", inputModalities: ["text"] })).toBe(true);
+  expect(modelAcceptsImageInput(config, { provider: "custom", id: "modela", inputModalities: ["text"] })).toBe(false);
+  expect(modelAcceptsImageInput(config, { provider: "custom", id: "ModelA:variant", inputModalities: ["text"] })).toBe(false);
+});
+
 test("account-bound ZCode models cannot recursively describe their own images", () => {
-  const config = configWithProviders({personal:{adapter:"zcode",baseUrl:"https://zcode.z.ai",authMode:"local",zcodeAccountId:"account-test"}});
-  expect(modelAcceptsImageInput(config,{provider:"personal",id:"builtin:zai-coding-plan/GLM-5.3-Flash",inputModalities:["text","image"]})).toBe(false);
+  const config = configWithProviders({
+    personal: {
+      adapter: "zcode",
+      baseUrl: "https://zcode.z.ai",
+      authMode: "local",
+      zcodeAccountId: "account-test",
+    },
+  });
+  expect(modelAcceptsImageInput(config, {
+    provider: "personal",
+    id: "builtin:zai-coding-plan/GLM-5.3-Flash",
+    inputModalities: ["text", "image"],
+  })).toBe(false);
 });
