@@ -22,6 +22,8 @@ partial-event, injection/drop, and EOF behavior. Output admission precedes its s
 failed enqueue and cancellation release the reservation without re-entering a disposed rewrite.
 Old/new buffer overlap remains charged against the same translator cap.
 
+A saved-account ZCode refresh in `src/adapters/zcode/adapter.ts` completes before native dispatch or output admission. Caller cancellation stops only that request's wait on the shared official refresh, emits no native stream bytes, and does not transfer cancellation ownership to sibling requests.
+
 `src/adapters/openai-responses.ts` counts new compaction fragments, including surrogate pairs formed
 across deltas, while retaining snapshot/done/delta precedence and existing terminal ownership.
 Serialized request and buffered-response observations use byte counts without measurement arrays.
