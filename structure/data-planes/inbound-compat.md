@@ -231,6 +231,8 @@ Provider-scoped approval reviewer settings are projected by the [catalog owner](
 ZCode native tool execution in `src/adapters/zcode/desktop.ts` uses host user permissions by default,
 not client-side tool dispatch. `OCX_ZCODE_SANDBOX=1` explicitly enables the optional
 Bubblewrap workspace boundary; harness restrictions apply where the native process runs.
+Managed host cancellation uses a bounded process-group TERM-to-KILL ladder for the official runtime
+and inherited native tools, then removes the disposable turn home before returning.
 
 ZCode saved accounts use explicit provider bindings, separate from native OpenAI pools and
 client integration exports. Their profile, catalog and transport contract is maintained in
