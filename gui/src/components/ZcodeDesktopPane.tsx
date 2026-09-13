@@ -53,7 +53,7 @@ export default function ZcodeDesktopPane({ apiBase, onConnected, onProviderState
       if (!response.ok) { setError(result.error ?? "runtime_failed"); return; }
       if (action === "test") {
         setTested(result.ok === true);
-        if (result.ok !== true) setError(result.error ?? "inference_failed");
+        if (result.ok !== true) setError(result.error ?? "protocol_failed");
       }
       else {
         applyStatus(result as Status); setConsent(false);

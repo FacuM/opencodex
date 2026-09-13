@@ -18,7 +18,8 @@ const SAFE_ACCOUNT_REFRESH_ERRORS = new Set(["account_login_required", "account_
 export interface ZcodeAdapterDeps {
   settings?: () => ZcodeSettings;
   client?: (settings: ZcodeSettings) => Client;
-  refreshAccount?: (id: string) => Promise<boolean | void>;
+  // True is the explicit fence that permits a persisted refresh to advance settings.scope.
+  refreshAccount?: (id: string) => Promise<boolean>;
   timeoutMs?: number;
 }
 

@@ -43,7 +43,9 @@ export default function ZcodeAccountsPane({ apiBase, runtime, workspace, onProvi
     } catch (e) {
       if (!stopped()) {
         setError(e instanceof Error ? e.message : "native_oauth_failed");
-        setJob({ ...current, phase: "authenticated", url: undefined });
+        // A recovery retry already owns a finished, idempotent job. Keep that state so a
+        // transient /complete failure cannot restart OAuth polling or hide Retry activation.
+        setJob({ ...current, phase: current.phase === "recovery" ? "recovery" : "authenticated", url: undefined });
       }
       return;
     }

@@ -114,7 +114,7 @@ test("protocol recheck is a separate tool-free action that does not claim quota 
 test("a successful HTTP response with a failed protocol recheck shows the actionable error", async () => {
   Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL) => {
     const path = new URL(String(input), "http://localhost").pathname;
-    if (path.endsWith("/test")) return Response.json({ ok: false, error: "protocol_failed" }, { status: 400 });
+    if (path.endsWith("/test")) return Response.json({ ok: false });
     return Response.json({ connected: true, activation: "ready", providerName: "zcode", runtimes: ["/installed/ZCode"],
       runtime: "/installed/ZCode", workspace: "/project", models: [{ id: "builtin:zai/model", label: "Model" }] });
   } });
@@ -379,6 +379,57 @@ test("partial completion keeps its finished job recoverable when the account ref
   expect(host.textContent).toContain("provider enabled · models published");
   expect(mutationCalls).toBe(2);
   expect(additions).toEqual([{ name: "zcode-recovered", adapter: "zcode" }]);
+});
+
+test("a failed recovery retry stays recoverable without restarting OAuth polling", async () => {
+  let completions = 0;
+  let failNextRefresh = false;
+  const prior = globalThis.fetch;
+  Object.defineProperty(globalThis, "fetch", { configurable: true, value: async (input: RequestInfo | URL, options?: RequestInit) => {
+    const url = new URL(String(input), "http://localhost");
+    if (!url.pathname.startsWith("/api/zcode-accounts")) return prior(input, options);
+    requests.push({ path: url.pathname, body: options?.body ? JSON.parse(String(options.body)) : undefined });
+    if (url.pathname.endsWith("/login")) return Response.json({ jobId: "retry-job", accountId: "retry-account",
+      phase: options?.method === "POST" ? "waiting" : "authenticated" });
+    if (url.pathname.endsWith("/complete")) {
+      completions++;
+      if (completions === 1) {
+        failNextRefresh = true;
+        return Response.json({ activation: "catalog_pending", error: "catalog_update_failed" });
+      }
+      if (completions === 2) return Response.json({ error: "native_oauth_failed" }, { status: 503 });
+      return Response.json({ activation: "ready", providerName: "zcode-retry" });
+    }
+    if (failNextRefresh) {
+      failNextRefresh = false;
+      return Response.json({ error: "refresh_failed" }, { status: 500 });
+    }
+    return Response.json({ accounts: completions > 2 ? [{ id: "retry-account", label: "Retry fixture",
+      activation: "ready", providerName: "zcode-retry", busy: false }] : [] });
+  } });
+  await mountPane();
+  const section = host.querySelector("h3")!.closest("section")!;
+  const input = section.querySelector('input:not([type="checkbox"])') as HTMLInputElement;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(win.HTMLInputElement.prototype, "value")!.set!.call(input, "Retry fixture");
+    input.dispatchEvent(new win.Event("input", { bubbles: true }));
+  });
+  await click(section.querySelector<HTMLInputElement>('input[type="checkbox"]')!);
+  await click(button("Add account"));
+  await waitUntil(() => completions === 1 && [...section.querySelectorAll("button")]
+    .some(item => item.textContent === "Retry activation"));
+  const loginPollsBeforeRetry = requests.filter(request => request.path.endsWith("/login") && !request.body).length;
+
+  await click(button("Retry activation"));
+  await waitUntil(() => completions === 2 && host.textContent?.includes("native_oauth_failed") === true);
+  await act(async () => { await Bun.sleep(50); });
+  expect(button("Retry activation").disabled).toBe(false);
+  expect(requests.filter(request => request.path.endsWith("/login") && !request.body)).toHaveLength(loginPollsBeforeRetry);
+
+  await click(button("Retry activation"));
+  await waitUntil(() => completions === 3 && host.textContent?.includes("Retry fixture") === true);
+  expect(host.textContent).toContain("provider enabled · models published");
+  expect(requests.filter(request => request.path.endsWith("/login") && request.body)).toHaveLength(1);
 });
 
 test("saved account activation refreshes the parent only after provider and catalog readiness", async () => {
