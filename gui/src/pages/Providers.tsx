@@ -712,6 +712,7 @@ export default function Providers({ apiBase }: { apiBase: string }) {
         onAccountLogout={(provider) => { void logoutOAuth(provider); }}
         onAccountManage={onAccountManage}
         onOpenAdd={fetchOauth}
+        onProviderStateMutation={refreshProviderStateAfterNestedMutation}
         onCloseCodexLogin={() => setCodexLoginOpen(false)}
         onCodexAdded={(completion) => {
           setCodexLoginOpen(false);
