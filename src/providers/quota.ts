@@ -1,4 +1,4 @@
-import { readZcodeQuota, zcodeQuotaIdentity } from "../adapters/zcode/quota";
+import { readZcodeQuota, refreshZcodeQuotaIdentity, zcodeQuotaIdentity } from "../adapters/zcode/quota";
 import { createHash } from "node:crypto";
 import {
   effectiveCodexAuthAccountId,
@@ -3190,8 +3190,8 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
   const prefetchedCodexSnapshot = hasCodexPoolProvider(config)
     ? listCodexAuthAccountsSnapshot(config, forceRefresh)
     : undefined;
-  const keyCandidate = cacheKeyWithAggregationState(config, prefetchedCodexSnapshot);
-  const key = typeof keyCandidate === "string" ? keyCandidate : await keyCandidate;
+  let keyCandidate = cacheKeyWithAggregationState(config, prefetchedCodexSnapshot);
+  let key = typeof keyCandidate === "string" ? keyCandidate : await keyCandidate;
   const writerGeneration = captureConfigGeneration();
   const now = Date.now();
   // The cache fast path must not extend a preserved last-good row past its 30-minute bound:
@@ -3200,11 +3200,25 @@ export async function fetchProviderQuotaReports(config: OcxConfig, forceRefresh 
   // by construction and never becomes fresher on its own. Without the exemption a single
   // configured passive provider makes this predicate permanently false, so every dashboard
   // poll re-probes every OTHER provider upstream instead of serving the 5-minute cache.
-  const cacheFresh = cache && cache.key === key && now - cache.ts < CACHE_TTL_MS
-    && cache.response.reports.every(item =>
-      (item.observed === true || now - item.updatedAt < LAST_GOOD_MAX_AGE_MS)
+  const freshCacheFor = (candidate: string, at: number) => cache && cache.key === candidate
+    && at - cache.ts < CACHE_TTL_MS && cache.response.reports.every(item =>
+      (item.observed === true || at - item.updatedAt < LAST_GOOD_MAX_AGE_MS)
       && isProviderQuotaReportCurrent(item));
-  if (!forceRefresh && cacheFresh) return cache!.response;
+  if (!forceRefresh && freshCacheFor(key, now)) return cache!.response;
+  const savedZcodeProviders = Object.values(config.providers).filter(provider => (
+    provider.adapter === "zcode" && provider.authMode === "local"
+    && provider.disabled !== true && provider.zcodeAccountId
+  ));
+  if (savedZcodeProviders.length > 0) {
+    // A saved-account refresh can atomically rewrite the official profile. Do it only after a
+    // cache miss, then key both the probe and its commit from the verified post-refresh identity.
+    await Promise.all(savedZcodeProviders.map(async provider => {
+      try { await refreshZcodeQuotaIdentity(provider); } catch { /* Unavailable accounts remain unavailable. */ }
+    }));
+    keyCandidate = cacheKeyWithAggregationState(config, prefetchedCodexSnapshot);
+    key = typeof keyCandidate === "string" ? keyCandidate : await keyCandidate;
+    if (!forceRefresh && freshCacheFor(key, Date.now())) return cache!.response;
+  }
   const joinable = inflight.get(key);
   if (!forceRefresh && joinable && joinable.epoch === invalidationEpoch) return joinable.promise;
   // A forced probe takes commit authority: older in-flight probes must not overwrite its result.
