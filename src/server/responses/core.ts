@@ -7336,13 +7336,14 @@ async function handleResponsesInner(
         : observeEmptyCompletion(eventSource, () => {
           console.warn(emptyCompletionNotice(route.providerName, route.modelId));
         });
+      const cancelRunTurnStream = () => {
+        cancelResponseCompletion();
+        runTurnAbort.abort();
+        queue.close();
+      };
       const sseStream = bridgeToResponsesSSE(
         guardedSource, parsed._responseModelId ?? parsed.modelId, toolNsMap, freeformToolNames, toolSearchToolNames,
-        () => {
-          cancelResponseCompletion();
-          runTurnAbort.abort();
-          queue.close();
-        }, 2_000,
+        cancelRunTurnStream, 2_000,
         {
           translatorBudget,
           replayCacheScope: parsed._reasoningReplayScope,
@@ -7381,7 +7382,11 @@ async function handleResponsesInner(
         },
       );
       const bridgeTurnAc = new AbortController();
-      const trackedSse = trackStreamLifetime(sseStream, bridgeTurnAc, undefined, options.turnAdmissionLease);
+      bridgeTurnAc.signal.addEventListener("abort", cancelRunTurnStream, { once: true });
+      const trackedSse = trackStreamLifetime(sseStream, bridgeTurnAc, () => {
+        bridgeTurnAc.signal.removeEventListener("abort", cancelRunTurnStream);
+        cleanupRunTurnAbort();
+      }, options.turnAdmissionLease);
       const response = new Response(trackedSse, {
         headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no" },
       });
